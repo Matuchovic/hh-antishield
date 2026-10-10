@@ -1,0 +1,71 @@
+{
+  "format_version": 1,
+  "pack_id": "hh-antishield-test",
+  "sequence": 1,
+  "version": "2026.10.10-test.1",
+  "created_at_unix": 1791590400,
+  "expires_at_unix": 1823126400,
+  "min_engine_version": "0.1.0",
+  "test_pack": true,
+  "rules": [
+    {
+      "id": "HH-TEST-EICAR",
+      "version": 1,
+      "kind": "eicar",
+      "name": "Testovací soubor EICAR",
+      "severity": "test_only",
+      "description": {
+        "cs": "Soubor odpovídá oficiální definici testovacího souboru EICAR. Není škodlivý; slouží k ověření, že detekce funguje.",
+        "en": "The file matches the official EICAR anti-malware test file definition. It is harmless and only verifies that detection works."
+      }
+    },
+    {
+      "id": "HH-TEST-EICAR-SHA256",
+      "version": 1,
+      "kind": "sha256",
+      "sha256": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f",
+      "name": "EICAR (otisk SHA-256)",
+      "severity": "test_only",
+      "description": {
+        "cs": "SHA-256 souboru se přesně shoduje s 68bajtovým testovacím souborem EICAR. Nejde o škodlivý software.",
+        "en": "The file's SHA-256 exactly matches the 68-byte EICAR test file. This is not malware."
+      }
+    },
+    {
+      "id": "HH-TEST-MARKER-0001",
+      "version": 1,
+      "kind": "bytes",
+      "pattern_hex": "48482d414e5449534849454c442d544553542d4d41524b45522d30303031",
+      "name": "Testovací značka H&H 0001",
+      "severity": "test_only",
+      "description": {
+        "cs": "Soubor obsahuje testovací značku H&H AntiShield. Slouží k ověření bajtových pravidel, nejde o škodlivý software.",
+        "en": "The file contains an H&H AntiShield test marker used to verify byte rules. This is not malware."
+      }
+    },
+    {
+      "id": "HH-TEST-SYNTH-0001",
+      "version": 1,
+      "kind": "sha256",
+      "sha256": "9165bb977ff9815b22c7b87a7721697a88d6669a69c4b4b40689f3774632c64a",
+      "name": "Syntetický testovací vzorek 0001",
+      "severity": "test_only",
+      "description": {
+        "cs": "SHA-256 souboru se shoduje se syntetickým testovacím vzorkem H&H. Vzorek je náhodná neškodná data.",
+        "en": "The file's SHA-256 matches an H&H synthetic test sample made of harmless random data."
+      }
+    },
+    {
+      "id": "HH-TEST-SYNTH-0002",
+      "version": 1,
+      "kind": "sha256",
+      "sha256": "31c21cfd84d11f0ca11d09f73f7e2a400f0f71f0df44c074044cbb347d1b2c29",
+      "name": "Syntetický testovací vzorek 0002",
+      "severity": "test_only",
+      "description": {
+        "cs": "SHA-256 souboru se shoduje se syntetickým testovacím vzorkem H&H. Vzorek je náhodná neškodná data.",
+        "en": "The file's SHA-256 matches an H&H synthetic test sample made of harmless random data."
+      }
+    }
+  ]
+}
