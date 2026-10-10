@@ -1,0 +1,12 @@
+/target
+**/node_modules
+/app/dist
+/app/src-tauri/gen/schemas
+/antishield-data
+# Soukromé klíče nikdy do repozitáře
+*.key
+*.p12
+*.pem
+.env
+.env.*
+.DS_Store
