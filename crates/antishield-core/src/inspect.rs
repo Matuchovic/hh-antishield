@@ -1,5 +1,6 @@
-//! Kontrola jednoho souboru: otisky, vzory, YARA a obsah archivů ZIP.
-//! Používá ji koordinátor kontroly i hlídání složek.
+//! Kontrola jednoho souboru: otisky, vzory, YARA a obsah archivů ZIP
+//! (na macOS i balíčků PKG a obrazů DMG). Používá ji koordinátor kontroly
+//! i hlídání složek.
 
 use std::io::{Cursor, Read};
 use std::path::Path;
@@ -145,22 +146,55 @@ fn run_yara(
     Ok(())
 }
 
+/// Kontrola položek uvnitř archivu, balíčku nebo obrazu disku. Nálezy patří
+/// vnějšímu souboru (cesta, otisk, identita) s názvem položky, takže je
+/// karanténa izoluje celý.
+pub(crate) struct ContainerScan<'a, 's> {
+    ctx: &'a Context<'a>,
+    limits: &'a ScanLimits,
+    yara: Option<&'a mut yara_x::Scanner<'s>>,
+    out: &'a mut Vec<Finding>,
+}
+
+impl ContainerScan<'_, '_> {
+    /// Větší položky se nečtou (stejný limit jako u YARA).
+    pub(crate) fn max_entry_bytes(&self) -> u64 {
+        self.limits.max_yara_file_bytes
+    }
+
+    /// Zkontroluje data jedné položky; `false`, když ji nešlo zkontrolovat celou.
+    pub(crate) fn entry(&mut self, name: &str, data: &[u8]) -> bool {
+        let verdict = scan_buffer(self.ctx.rules, data, CHUNK_SIZE);
+        for m in &verdict.matches {
+            self.out.push(
+                self.ctx
+                    .classic(m.rule_index, m.evidence.clone(), Some(name)),
+            );
+        }
+        let mut complete = true;
+        if let Some(scanner) = self.yara.as_deref_mut()
+            && run_yara(scanner, data, self.ctx, Some(name), self.out).is_err()
+        {
+            complete = false;
+        }
+        // Vnořené archivy se dál nerozbalují.
+        if verdict.archive.is_some() {
+            complete = false;
+        }
+        complete
+    }
+}
+
 /// Zkontroluje obsah archivu ZIP v paměti. Vrací `false`, když obsah
 /// nešlo projít celý (šifrování, limity, poškození, vnořené archivy).
-fn inspect_zip(
-    data: &[u8],
-    limits: &ScanLimits,
-    mut yara: Option<&mut yara_x::Scanner<'_>>,
-    ctx: &Context<'_>,
-    hooks: &Hooks<'_>,
-    out: &mut Vec<Finding>,
-) -> bool {
+fn inspect_zip(data: &[u8], scan: &mut ContainerScan<'_, '_>, hooks: &Hooks<'_>) -> bool {
     let Ok(mut archive) = zip::ZipArchive::new(Cursor::new(data)) else {
         return false;
     };
     if archive.len() > MAX_ZIP_ENTRIES {
         return false;
     }
+    let limit = scan.max_entry_bytes();
     let mut complete = true;
     let mut total = 0u64;
     let mut entry_data = Vec::new();
@@ -177,7 +211,7 @@ fn inspect_zip(
         }
         let size = entry.size();
         let packed = entry.compressed_size().max(1);
-        if size > limits.max_yara_file_bytes
+        if size > limit
             || total.saturating_add(size) > MAX_ZIP_TOTAL_BYTES
             || (size > 1024 * 1024 && size / packed > MAX_ZIP_RATIO)
         {
@@ -190,27 +224,14 @@ fn inspect_zip(
         };
         entry_data.clear();
         // Skutečnou velikost hlídá i čtení: hlavička může lhát.
-        let read = (&mut entry)
-            .take(limits.max_yara_file_bytes + 1)
-            .read_to_end(&mut entry_data);
-        if read.is_err() || entry_data.len() as u64 > limits.max_yara_file_bytes {
+        let read = (&mut entry).take(limit + 1).read_to_end(&mut entry_data);
+        if read.is_err() || entry_data.len() as u64 > limit {
             complete = false;
             continue;
         }
         total += entry_data.len() as u64;
         (hooks.progress)(0);
-
-        let verdict = scan_buffer(ctx.rules, &entry_data, CHUNK_SIZE);
-        for m in &verdict.matches {
-            out.push(ctx.classic(m.rule_index, m.evidence.clone(), Some(&name)));
-        }
-        if let Some(scanner) = yara.as_deref_mut()
-            && run_yara(scanner, &entry_data, ctx, Some(&name), out).is_err()
-        {
-            complete = false;
-        }
-        // Vnořené archivy se dál nerozbalují.
-        if verdict.archive.is_some() {
+        if !scan.entry(&name, &entry_data) {
             complete = false;
         }
     }
@@ -307,8 +328,23 @@ pub(crate) fn inspect_file(
     }
 
     let mut archive_incomplete = verdict.archive.is_some();
-    if matches!(verdict.archive, Some(ArchiveFormat::Zip)) && complete_in_memory {
-        archive_incomplete = !inspect_zip(content, limits, yara, &ctx, hooks, &mut findings);
+    let mut scan = ContainerScan {
+        ctx: &ctx,
+        limits,
+        yara,
+        out: &mut findings,
+    };
+    match verdict.archive {
+        Some(ArchiveFormat::Zip) if complete_in_memory => {
+            archive_incomplete = !inspect_zip(content, &mut scan, hooks);
+        }
+        // Balíčky a obrazy disků macOS: jen nezměněný soubor (karanténa ověří otisk).
+        #[cfg(target_os = "macos")]
+        Some(format @ (ArchiveFormat::Dmg | ArchiveFormat::Xar)) if !changed => {
+            archive_incomplete =
+                !crate::container::inspect(path, format, verdict.size, &mut scan, hooks);
+        }
+        _ => {}
     }
 
     if content.capacity() > KEEP_CONTENT_CAPACITY {

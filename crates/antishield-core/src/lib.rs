@@ -14,12 +14,15 @@
 //! - [`engine`]: spojení všeho dohromady pro aplikaci a CLI.
 
 pub mod audit;
+#[cfg(target_os = "macos")]
+mod container;
 pub mod engine;
 pub mod error;
 pub mod inspect;
 pub mod matcher;
 mod platform;
 pub mod posture;
+pub mod privacy;
 pub mod quarantine;
 pub mod rules;
 pub mod scan;

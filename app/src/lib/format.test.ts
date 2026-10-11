@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   COMPONENT_LABELS,
   describeAuditEvent,
+  describeError,
   describeEvidence,
   describeState,
   displayPath,
@@ -89,6 +90,13 @@ describe("texts", () => {
     expect(formatCount(5, "soubor", "soubory", "souborů")).toBe("5 souborů");
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1_500_000)).toMatch(/^1,5\sMB$/);
+  });
+
+  it("explains update failures with the technical reason", () => {
+    expect(describeError({ code: "update", message: "Read-only file system (os error 30)" })).toMatch(
+      /^Aktualizaci se nepodařilo .*\(Read-only file system \(os error 30\)\)$/,
+    );
+    expect(describeError({ code: "update_location", message: "x" })).toMatch(/složce Aplikace/);
   });
 
   it("hides the Windows verbatim path prefix", () => {

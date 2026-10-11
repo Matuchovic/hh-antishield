@@ -216,6 +216,22 @@ fn system_settings_url(check_id: &str) -> Option<&'static str> {
         "filevault" => Some("x-apple.systempreferences:com.apple.preference.security?FileVault"),
         "firewall" => Some("x-apple.systempreferences:com.apple.preference.security?Firewall"),
         "xprotect" => Some("x-apple.systempreferences:com.apple.preferences.softwareupdate"),
+        "fullDisk" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+        }
+        "camera" => Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Camera"),
+        "microphone" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+        }
+        "screen" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+        }
+        "accessibility" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+        }
+        "input" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
+        }
         _ => None,
     }
 }
@@ -249,6 +265,18 @@ pub fn open_system_settings(check_id: String) -> Result<(), ErrorDto> {
         .spawn()
         .map(|_| ())
         .map_err(|e| app_error("open_settings", &e.to_string()))
+}
+
+/// Přehled oprávnění aplikací (čerstvě načtený, jen čtení).
+#[tauri::command]
+pub async fn privacy_report(
+    app: AppHandle,
+) -> Result<antishield_core::privacy::PrivacyReport, ErrorDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        services::refresh_privacy(&app.state::<AppState>())
+    })
+    .await
+    .map_err(|e| app_error("privacy", &e.to_string()))
 }
 
 #[tauri::command]
@@ -350,6 +378,17 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
         return Err(app_error(
             "scan_running",
             "Počkejte na konec kontroly, pak aktualizujte.",
+        ));
+    }
+    // Aplikaci spuštěnou z DMG nebo z dočasného umístění, kam macOS přesouvá
+    // nepřesunuté stažené aplikace, nejde nahradit (jen pro čtení).
+    #[cfg(target_os = "macos")]
+    if let Ok(exe) = std::env::current_exe()
+        && crate::agent::installed_exe(&exe).is_err()
+    {
+        return Err(app_error(
+            "update_location",
+            "the app does not run from the Applications folder",
         ));
     }
     let update = state

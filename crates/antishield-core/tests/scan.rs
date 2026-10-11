@@ -596,3 +596,71 @@ fn single_file_inspection_resolves_parents_but_not_the_file() {
         antishield_core::InspectResult::Skipped(antishield_core::SkipReason::Symlink)
     ));
 }
+
+/// macOS: obsah instalačních balíčků (PKG) a obrazů disků (DMG) se kontroluje
+/// a nález patří vnějšímu souboru, takže ho karanténa izoluje celý.
+#[cfg(target_os = "macos")]
+#[test]
+fn installer_packages_and_disk_images_are_inspected() {
+    use std::process::Command;
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = engine(&tmp.path().join("state"));
+    let payload = tmp.path().join("payload");
+    std::fs::create_dir_all(payload.join("Library/Test")).unwrap();
+    write(&payload.join("Library/Test/eicar.com"), &eicar());
+    let pkg = tmp.path().join("test.pkg");
+    assert!(
+        Command::new("/usr/bin/pkgbuild")
+            .arg("--root")
+            .arg(&payload)
+            .args(["--identifier", "cz.hh.antishield.test", "--version", "1"])
+            .args(["--install-location", "/tmp/antishield-test"])
+            .arg(&pkg)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let dmg = tmp.path().join("test.dmg");
+    assert!(
+        Command::new("/usr/bin/hdiutil")
+            .args([
+                "create",
+                "-quiet",
+                "-volname",
+                "AntiShieldTest",
+                "-srcfolder"
+            ])
+            .arg(&payload)
+            .arg(&dmg)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let results = engine.inspect_paths(&[pkg.clone(), dmg.clone()]);
+    for (path, result) in &results {
+        let antishield_core::InspectResult::Scanned { findings, .. } = result else {
+            panic!("{path:?}: {result:?}");
+        };
+        let finding = findings
+            .iter()
+            .find(|f| {
+                f.archive_entry
+                    .as_deref()
+                    .is_some_and(|entry| entry.ends_with("eicar.com"))
+            })
+            .unwrap_or_else(|| panic!("{path:?}: {findings:?}"));
+        assert_eq!(
+            std::path::Path::new(&finding.path).file_name(),
+            path.file_name()
+        );
+    }
+    // Žádný obraz nezůstal připojený a karanténa izoluje celý balíček.
+    let mounts = String::from_utf8(Command::new("/sbin/mount").output().unwrap().stdout).unwrap();
+    assert!(!mounts.contains("antishield-"), "{mounts}");
+    let antishield_core::InspectResult::Scanned { findings, .. } = &results[0].1 else {
+        unreachable!()
+    };
+    let report = engine.remediate(&findings[0]);
+    assert!(report.quarantined.is_some(), "{report:?}");
+    assert!(!pkg.exists());
+}

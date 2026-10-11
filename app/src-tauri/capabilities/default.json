@@ -23,6 +23,7 @@
     "allow-quarantine-delete",
     "allow-posture-checks",
     "allow-open-system-settings",
+    "allow-privacy-report",
     "allow-update-rules-now",
     "allow-runtime-info",
     "allow-get-settings",

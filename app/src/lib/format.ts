@@ -48,6 +48,12 @@ const REASONS: Record<string, string> = {
   "a scan is already running": "kontrola už běží",
   "folder watching is starting": "hlídání se spouští",
   "no watched folder exists": "žádná hlídaná složka neexistuje",
+  "full disk access is required": "vyžaduje plný přístup k disku",
+  "apple mail is not used": "Apple Mail se na tomto Macu nepoužívá",
+  "mail folders are not watched": "složky Mailu se nehlídají",
+  "the permission overview is starting": "přehled oprávnění se načítá",
+  "the permission database could not be read": "databázi oprávnění nejde přečíst",
+  "not available on this system": "na tomto systému zatím není",
   "no access to files in a watched folder": "systém nedovolil číst soubory v hlídané složce",
   "app is not installed in Applications":
     "ochrana na pozadí potřebuje aplikaci ve složce Aplikace; přetáhněte ji tam z DMG a spusťte odtud",
@@ -254,12 +260,16 @@ const ERRORS: Record<string, string> = {
   autostart: "Spuštění po přihlášení se nepodařilo změnit.",
   no_targets: "Není co kontrolovat: žádná ze složek neexistuje.",
   update: "Aktualizaci se nepodařilo stáhnout nebo ověřit. Zkuste to později.",
+  update_location:
+    "Aktualizovat jde jen aplikaci ve složce Aplikace. Ukončete AntiShield, přetáhněte ho z DMG do Aplikací a spusťte odtud.",
   scan_running: "Počkejte na konec kontroly, pak aktualizujte.",
   no_update: "Žádná aktualizace není připravená. Zkontrolujte aktualizace znovu.",
 };
 
 export function describeError(error: ErrorDto): string {
-  return ERRORS[error.code] ?? error.message;
+  const text = ERRORS[error.code] ?? error.message;
+  // U aktualizace ukázat i technický důvod (pomáhá při podpoře).
+  return error.code === "update" && error.message ? `${text} (${error.message})` : text;
 }
 
 export function formatBytes(bytes: number): string {

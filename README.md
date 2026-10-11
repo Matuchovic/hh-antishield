@@ -1,12 +1,14 @@
 # H&H AntiShield
 
-Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.2**
-kontroluje soubory pravidly YARA a otisky, hlídá vybrané složky v reálném
-čase, nálezy jedním kliknutím přesune do karantény (a ukončí škodlivý proces
-nebo vypne jeho spouštění po přihlášení), sama si aktualizuje podepsaná
-pravidla i aplikaci a ukáže stav ochran vestavěných v systému. Spouštění
-programů zatím neblokuje a aplikace to na přehledu otevřeně říká. Přesný stav
-je v [docs/feature-status.md](docs/feature-status.md).
+Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.4**
+kontroluje soubory pravidly YARA a otisky (včetně obsahu ZIP a na macOS
+balíčků PKG a obrazů DMG), na pozadí hlídá vybrané složky, nově spuštěné
+programy, položky po přihlášení a přílohy Apple Mail, nálezy izoluje do
+karantény (škodlivý proces ukončí, položku po přihlášení vypne), ukáže
+oprávnění aplikací (obrazovka, klávesnice, kamera, …) a upozorní na nová,
+sama si aktualizuje podepsaná pravidla i aplikaci. Spouštění programů předem
+neblokuje a internetovou ochranu zatím nemá; aplikace to otevřeně říká.
+Přesný stav je v [docs/feature-status.md](docs/feature-status.md).
 
 Projekt je samostatný: nesdílí kód, účty, klíče ani nasazení s hhsecurity
 ani hhcloud.
