@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-posture-checks"
+description = "Enables the posture_checks command without any pre-configured scope."
+commands.allow = ["posture_checks"]
+
+[[permission]]
+identifier = "deny-posture-checks"
+description = "Denies the posture_checks command without any pre-configured scope."
+commands.deny = ["posture_checks"]

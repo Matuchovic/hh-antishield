@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Hlavní okno smí volat jen příkazy AntiShieldu a poslouchat události kontroly.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:event:allow-listen",
     "core:event:allow-unlisten",
@@ -11,9 +13,20 @@
     "allow-run-self-test",
     "allow-pick-targets",
     "allow-start-scan",
+    "allow-start-preset-scan",
     "allow-cancel-scan",
     "allow-recent-events",
     "allow-last-summary",
+    "allow-remediate",
+    "allow-quarantine-list",
+    "allow-quarantine-restore",
+    "allow-quarantine-delete",
+    "allow-posture-checks",
+    "allow-update-rules-now",
+    "allow-runtime-info",
+    "allow-get-settings",
+    "allow-save-settings",
+    "allow-pick-watch-folder",
     "allow-check-update",
     "allow-install-update"
   ]

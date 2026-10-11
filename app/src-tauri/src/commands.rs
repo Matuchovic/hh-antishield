@@ -2,26 +2,35 @@
 //! v `capabilities/default.json`.
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use antishield_core::error::ErrorDto;
+use antishield_core::posture::PostureCheck;
 use antishield_core::status::ProtectionSummary;
 use antishield_core::{
-    AuditEvent, EngineInfo, ScanEvent, ScanObserver, ScanRequest, ScanSummary, SelfTestReport,
+    AuditEvent, EngineInfo, QuarantineItem, RemediationReport, RuleUpdateOutcome, ScanRequest,
+    ScanSummary, SelfTestReport,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::state::AppState;
+use crate::services::{self, EmitObserver};
+use crate::settings::{PresetScan, Settings};
+use crate::state::{AppState, RuntimeInfo};
 
 fn app_error(code: &str, message: &str) -> ErrorDto {
     ErrorDto {
         code: code.to_string(),
         message: message.to_string(),
     }
+}
+
+fn engine_error(err: &antishield_core::EngineError) -> ErrorDto {
+    ErrorDto::from(err)
 }
 
 #[tauri::command]
@@ -54,8 +63,7 @@ pub struct Selection {
 }
 
 /// Otevře nativní dialog. Vybrané cesty zůstávají v backendu; rozhraní dostane
-/// jen ID výběru a cesty k zobrazení. Na macOS dialog zároveň udělí sandboxu
-/// přístup ke čtení vybraných položek.
+/// jen ID výběru a cesty k zobrazení.
 #[tauri::command]
 pub async fn pick_targets(app: AppHandle, kind: TargetKind) -> Result<Option<Selection>, ErrorDto> {
     let dialog = app.dialog().file().set_title(match kind {
@@ -84,23 +92,6 @@ pub async fn pick_targets(app: AppHandle, kind: TargetKind) -> Result<Option<Sel
     Ok(Some(Selection { id, paths: display }))
 }
 
-/// Posílá události kontroly do okna a pamatuje si poslední souhrn.
-struct EmitObserver {
-    app: AppHandle,
-    last_summary: Arc<Mutex<Option<ScanSummary>>>,
-}
-
-impl ScanObserver for EmitObserver {
-    fn on_event(&self, event: ScanEvent) {
-        if let ScanEvent::Finished { summary, .. } = &event
-            && let Ok(mut last) = self.last_summary.lock()
-        {
-            *last = Some(summary.clone());
-        }
-        let _ = self.app.emit("scan-event", &event);
-    }
-}
-
 #[tauri::command]
 pub fn start_scan(
     app: AppHandle,
@@ -120,10 +111,16 @@ pub fn start_scan(
     });
     let handle = engine
         .start_scan(ScanRequest::new(roots), observer)
-        .map_err(|err| ErrorDto::from(&err))?;
+        .map_err(|err| engine_error(&err))?;
     let scan_id = handle.scan_id().to_string();
     state.set_current_scan(handle);
     Ok(scan_id)
+}
+
+/// Rychlá (procesy, položky po spuštění, Stažené, Plocha) nebo úplná kontrola.
+#[tauri::command]
+pub fn start_preset_scan(app: AppHandle, kind: PresetScan) -> Result<String, ErrorDto> {
+    services::start_preset_scan(&app, kind)
 }
 
 #[tauri::command]
@@ -138,13 +135,133 @@ pub fn recent_events(state: State<'_, AppState>, limit: u32) -> Result<Vec<Audit
     state
         .engine()?
         .recent_audit_events(limit as usize)
-        .map_err(|err| ErrorDto::from(&err))
+        .map_err(|err| engine_error(&err))
 }
 
 #[tauri::command]
 pub fn last_summary(state: State<'_, AppState>) -> Option<ScanSummary> {
     state.last_summary()
 }
+
+// ---------- Vyčištění a karanténa ----------
+
+/// Vyčistí nálezy, které backend sám našel (podle cesty). Cizí cesty ignoruje.
+#[tauri::command]
+pub async fn remediate(
+    app: AppHandle,
+    paths: Vec<String>,
+) -> Result<Vec<RemediationReport>, ErrorDto> {
+    let state = app.state::<AppState>();
+    let engine = state.engine()?;
+    let findings = state.known_findings(&paths);
+    if findings.is_empty() {
+        return Err(app_error("unknown_finding", "no matching finding to clean"));
+    }
+    let reports = tauri::async_runtime::spawn_blocking(move || {
+        findings
+            .iter()
+            .map(|finding| engine.remediate(finding))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| app_error("remediate", &e.to_string()))?;
+    let _ = app.emit("quarantine-changed", ());
+    Ok(reports)
+}
+
+#[tauri::command]
+pub fn quarantine_list(state: State<'_, AppState>) -> Result<Vec<QuarantineItem>, ErrorDto> {
+    state
+        .engine()?
+        .quarantine_items()
+        .map_err(|err| engine_error(&err))
+}
+
+#[tauri::command]
+pub async fn quarantine_restore(app: AppHandle, id: String) -> Result<QuarantineItem, ErrorDto> {
+    let engine = app.state::<AppState>().engine()?;
+    let item = tauri::async_runtime::spawn_blocking(move || engine.restore_quarantined(&id))
+        .await
+        .map_err(|e| app_error("quarantine", &e.to_string()))?
+        .map_err(|err| engine_error(&err))?;
+    let _ = app.emit("quarantine-changed", ());
+    Ok(item)
+}
+
+#[tauri::command]
+pub async fn quarantine_delete(app: AppHandle, id: String) -> Result<QuarantineItem, ErrorDto> {
+    let engine = app.state::<AppState>().engine()?;
+    let item = tauri::async_runtime::spawn_blocking(move || engine.delete_quarantined(&id))
+        .await
+        .map_err(|e| app_error("quarantine", &e.to_string()))?
+        .map_err(|err| engine_error(&err))?;
+    let _ = app.emit("quarantine-changed", ());
+    Ok(item)
+}
+
+// ---------- Bezpečnost systému, pravidla, běh ochrany ----------
+
+#[tauri::command]
+pub async fn posture_checks() -> Result<Vec<PostureCheck>, ErrorDto> {
+    tauri::async_runtime::spawn_blocking(antishield_core::posture::checks)
+        .await
+        .map_err(|e| app_error("posture", &e.to_string()))
+}
+
+#[tauri::command]
+pub async fn update_rules_now(app: AppHandle) -> Result<RuleUpdateOutcome, ErrorDto> {
+    services::update_rules(&app).await
+}
+
+#[tauri::command]
+pub fn runtime_info(state: State<'_, AppState>) -> RuntimeInfo {
+    state.runtime_info()
+}
+
+// ---------- Nastavení ----------
+
+#[tauri::command]
+pub fn get_settings(state: State<'_, AppState>) -> Settings {
+    state.settings()
+}
+
+#[tauri::command]
+pub fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, ErrorDto> {
+    let state = app.state::<AppState>();
+    let before = state.settings();
+    state.set_settings(settings.clone())?;
+    if before.protection_enabled != settings.protection_enabled
+        || before.watch_folders != settings.watch_folders
+    {
+        services::apply_protection(&app);
+    }
+    if before.launch_at_login != settings.launch_at_login {
+        let autostart = app.autolaunch();
+        let result = if settings.launch_at_login {
+            autostart.enable()
+        } else {
+            autostart.disable()
+        };
+        result.map_err(|e| app_error("autostart", &e.to_string()))?;
+    }
+    Ok(settings)
+}
+
+/// Přidá složku k hlídání přes nativní dialog (rozhraní cesty nezadává).
+#[tauri::command]
+pub async fn pick_watch_folder(app: AppHandle) -> Result<Option<String>, ErrorDto> {
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Vyberte složku k hlídání")
+        .blocking_pick_folder();
+    Ok(picked
+        .and_then(|p| p.into_path().ok())
+        .filter(|p| p.is_absolute())
+        .map(|p| p.display().to_string()))
+}
+
+// ---------- Aktualizace aplikace ----------
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

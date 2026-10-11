@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-preset-scan"
+description = "Enables the start_preset_scan command without any pre-configured scope."
+commands.allow = ["start_preset_scan"]
+
+[[permission]]
+identifier = "deny-start-preset-scan"
+description = "Denies the start_preset_scan command without any pre-configured scope."
+commands.deny = ["start_preset_scan"]
