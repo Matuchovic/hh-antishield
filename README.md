@@ -26,7 +26,13 @@ artefakty běhu, později z webu AntiShieldu.
 uživatele, bez práv správce). SmartScreen ukáže varování, protože instalátor
 zatím není podepsaný: *Další informace → Přesto spustit*.
 
-Před instalací porovnejte SHA-256 souboru s `SHA256SUMS-*.txt` z téhož běhu.
+Před instalací porovnejte SHA-256 souboru s `SHA256SUMS-*.txt` z téhož vydání.
+
+**Aktualizace:** od verze 0.1.1 si aplikace sama hlídá nové verze na GitHub
+Releases. Když nějaká vyjde, ukáže nahoře banner *Aktualizovat*; stáhne ji,
+ověří podpis (Ed25519) a po restartu běží nová verze. Ručně se instaluje jen
+první verze s aktualizacemi. Vydání: `git tag -a vX.Y.Z -m "poznámky"` a push
+značky (verze v `package.json`, `tauri.conf.json` a `Cargo.toml` musí sedět).
 
 ## Vývoj
 
@@ -38,7 +44,7 @@ cargo test -p antishield-core -p antishield-cli   # testy jádra
 cargo run -p antishield-cli -- scan ~/Downloads    # skener z příkazové řádky
 cd app && npm ci && npm test                       # testy rozhraní
 cd app && npm run tauri dev                        # aplikace v režimu vývoje
-cd app && npm run tauri build                      # instalační balíček pro tento systém
+cd app && npm run tauri build                      # balíček; potřebuje TAURI_SIGNING_PRIVATE_KEY
 ```
 
 | Složka | Obsah |
@@ -58,8 +64,8 @@ cd app && npm run tauri build                      # instalační balíček pro 
   Skutečný malware do repozitáře nepatří.
 - Rozhraní smí volat jen 8 příkazů povolených v
   `app/src-tauri/capabilities/default.json`; cesty ke kontrole vybírá nativní
-  dialog v backendu. Na macOS běží aplikace v App Sandboxu jen se čtením
-  vybraných souborů.
+  dialog v backendu. App Sandbox je vypnutý, protože aplikace v sandboxu se
+  nemůže sama aktualizovat; aktualizace přijme jen s platným podpisem.
 - Auditní log je řetězený SHA-256 (`antishield audit verify`).
 
 Zranitelnost hlaste přímo vývojovému týmu H&H, ne veřejným issue.

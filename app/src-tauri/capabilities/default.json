@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Hlavní okno smí volat jen příkazy AntiShieldu a poslouchat události kontroly.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-engine-info",
+    "allow-protection-status",
+    "allow-run-self-test",
+    "allow-pick-targets",
+    "allow-start-scan",
+    "allow-cancel-scan",
+    "allow-recent-events",
+    "allow-last-summary",
+    "allow-check-update",
+    "allow-install-update"
+  ]
+}

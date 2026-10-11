@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pick-targets"
+description = "Enables the pick_targets command without any pre-configured scope."
+commands.allow = ["pick_targets"]
+
+[[permission]]
+identifier = "deny-pick-targets"
+description = "Denies the pick_targets command without any pre-configured scope."
+commands.deny = ["pick_targets"]

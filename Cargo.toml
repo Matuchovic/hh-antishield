@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = ["crates/antishield-core", "crates/antishield-cli", "app/src-tauri"]
+# Jádro a CLI jdou přeložit a otestovat bez systémových knihoven pro webview.
+default-members = ["crates/antishield-core", "crates/antishield-cli"]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.90"
+license = "LicenseRef-HH-Proprietary"
+publish = false
+authors = ["H&H"]
+
+[workspace.dependencies]
+antishield-core = { path = "crates/antishield-core" }
+aho-corasick = "1.1.5"
+clap = { version = "4.6.7", features = ["derive"] }
+ed25519-dalek = "3.0.0"
+hex = "0.4.3"
+libc = "0.2.190"
+proptest = "1.12.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.152"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+uuid = { version = "1.28.0", features = ["v4"] }
+walkdir = "2.5.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
+
+[profile.release]
+# Izolace chyb po souborech stojí na catch_unwind, proto nikdy panic = "abort".
+panic = "unwind"
+lto = "thin"
+codegen-units = 1
+strip = true
