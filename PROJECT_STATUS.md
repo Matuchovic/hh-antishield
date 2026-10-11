@@ -1,15 +1,14 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11
+Aktualizováno: 2026-10-11 (v0.1.1)
 
 ## Stav
-v0.1 (ruční skener) hotová. Kód v PR #1 (větev `claude/v0.1-manual-scanner`),
-CI zelené na Linuxu, macOS i Windows. Release běh 38115958371 sestavil DMG
-i Windows instalátor (artefakty, self-test prošel).
-
-Rozhraní podle mockupu (logo H&H Security z hhsecurity-web-app, animace;
-obsah zůstává pravdivý: žádné „chráněno“, plánované funkce označené).
-DMG ověřen na skutečném Macu: okno, sandbox a self-test fungují.
+v0.1.1 vydána: https://github.com/Matuchovic/hh-antishield/releases/tag/v0.1.1
+(DMG universal, Windows NSIS, podepsané aktualizace, latest.json). PR #1
+sloučený do `main`. Aplikace hledá aktualizace po startu, každých 5 min
+a při návratu do okna; instalace přes banner po potvrzení uživatele.
+Rozhraní podle mockupu (logo H&H Security, animace, pravdivý obsah).
+DMG 0.1.0 ověřen na skutečném Macu (okno, self-test).
 
 ## Architektura
 - `crates/antishield-core` – engine: pravidla podepsaná Ed25519, streamový
@@ -44,5 +43,11 @@ spuštění aplikace pod Xvfb.
 - Soukromý testovací klíč `hh-test-2026-10` je jen v dočasném úložišti
   session; při ztrátě vygenerovat nový a vyměnit veřejný klíč v `rules/keys`.
 
+## Vydání
+Zvýšit verzi (`app/package.json`, `tauri.conf.json`, `Cargo.toml`), sloučit
+do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish“.
+Vydání potvrzuje vždy člověk; tag z cloudového prostředí vytvořit nejde.
+
 ## Další krok
-Ruční test DMG na jednom Macu, pak sloučit PR #1.
+Nainstalovat 0.1.1 na Macy ručně, pak vydat 0.1.2 a ověřit celý průběh
+aktualizace přes banner.
