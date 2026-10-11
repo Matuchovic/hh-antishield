@@ -38,7 +38,7 @@ const FAR = ridge(7, 292, 6, 235, 16);
 const MID = ridge(21, 336, 7, 140, 14);
 const NEAR = ridge(42, 372, 8, 70, 12);
 
-function Particles({ intense }: { intense: boolean }) {
+function Particles({ intense, still }: { intense: boolean; still: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const speed = useRef(1);
   useEffect(() => {
@@ -49,16 +49,18 @@ function Particles({ intense }: { intense: boolean }) {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const frozen = still || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // Měkké tečky nepotřebují plné rozlišení Retina; menší plátno = levnější snímek.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     let w = 0;
     let h = 0;
     let frame = 0;
+    let last = 0;
     type P = { x: number; y: number; r: number; vx: number; vy: number; a: number; t: number };
     let dots: P[] = [];
 
     const seed = () => {
-      dots = Array.from({ length: 70 }, () => ({
+      dots = Array.from({ length: 56 }, () => ({
         x: Math.random() * w,
         y: Math.random() * h,
         r: 0.4 + Math.random() * 1.7,
@@ -78,8 +80,10 @@ function Particles({ intense }: { intense: boolean }) {
         ctx.fill();
       }
     };
-    const step = () => {
-      const k = speed.current;
+    const step = (now: number) => {
+      // Pohyb podle času, ne podle počtu snímků (stejná rychlost při 60 i 120 Hz).
+      const k = speed.current * Math.min(last ? (now - last) / 16.7 : 1, 3);
+      last = now;
       for (const p of dots) {
         p.x += p.vx * k;
         p.y += p.vy * k;
@@ -106,66 +110,85 @@ function Particles({ intense }: { intense: boolean }) {
     };
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
+    let visible = true;
+    const io = new IntersectionObserver(([entry]) => {
+      const now = entry?.isIntersecting ?? true;
+      if (now === visible) return;
+      visible = now;
+      cancelAnimationFrame(frame);
+      last = 0;
+      if (visible && !frozen && !document.hidden) frame = requestAnimationFrame(step);
+    });
+    io.observe(canvas);
     const onVisibility = () => {
       cancelAnimationFrame(frame);
-      if (!document.hidden && !still) frame = requestAnimationFrame(step);
+      last = 0;
+      if (!document.hidden && !frozen && visible) frame = requestAnimationFrame(step);
     };
     document.addEventListener("visibilitychange", onVisibility);
     resize();
-    if (!still) frame = requestAnimationFrame(step);
+    if (!frozen) frame = requestAnimationFrame(step);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      io.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [still]);
 
   return <canvas ref={canvasRef} className="particles" />;
 }
 
-export function Backdrop({ intense = false }: { intense?: boolean }) {
+function Ridge({ className, path, fill, stops, rim }: {
+  className: string;
+  path: string;
+  fill: string;
+  stops: [string, string];
+  rim?: { color: string; opacity: number; width: number };
+}) {
+  return (
+    <div className={`ridge ${className}`}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+        <defs>
+          <linearGradient id={fill} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={stops[0]} />
+            <stop offset="1" stopColor={stops[1]} />
+          </linearGradient>
+          {rim ? (
+            <filter id={`${fill}-glow`} x="-10%" y="-50%" width="120%" height="200%">
+              <feGaussianBlur stdDeviation="3" />
+            </filter>
+          ) : null}
+        </defs>
+        <path d={path} fill={`url(#${fill})`} />
+        {rim ? (
+          <path
+            d={path}
+            fill="none"
+            stroke={rim.color}
+            strokeOpacity={rim.opacity}
+            strokeWidth={rim.width}
+            filter={`url(#${fill}-glow)`}
+          />
+        ) : null}
+      </svg>
+    </div>
+  );
+}
+
+export function Backdrop({ intense = false, still = false }: { intense?: boolean; still?: boolean }) {
+  // Každý hřeben je vlastní vrstva: posouvá se transformací bez překreslování.
   return (
     <div className="backdrop" aria-hidden="true">
       <div className="rays" />
-      <svg className="ridges" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMax slice">
-        <defs>
-          <linearGradient id="bd-far" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#1b4596" />
-            <stop offset="1" stopColor="#0a1a44" />
-          </linearGradient>
-          <linearGradient id="bd-mid" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#10306e" />
-            <stop offset="1" stopColor="#071433" />
-          </linearGradient>
-          <linearGradient id="bd-near" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#0a1c45" />
-            <stop offset="1" stopColor="#040b20" />
-          </linearGradient>
-          <linearGradient id="bd-water" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="#2a6cff" stopOpacity="0.35" />
-            <stop offset="1" stopColor="#040b20" stopOpacity="0" />
-          </linearGradient>
-          <radialGradient id="bd-glint" cx="0.5" cy="0.5" r="0.5">
-            <stop offset="0" stopColor="#9fd0ff" stopOpacity="0.45" />
-            <stop offset="1" stopColor="#9fd0ff" stopOpacity="0" />
-          </radialGradient>
-          <filter id="bd-glow" x="-10%" y="-50%" width="120%" height="200%">
-            <feGaussianBlur stdDeviation="3" />
-          </filter>
-        </defs>
-        <g className="ridge far">
-          <path d={FAR} fill="url(#bd-far)" />
-          <path d={FAR} fill="none" stroke="#6fb1ff" strokeOpacity="0.55" strokeWidth="2" filter="url(#bd-glow)" />
-        </g>
-        <g className="ridge mid">
-          <path d={MID} fill="url(#bd-mid)" />
-          <path d={MID} fill="none" stroke="#4a8fff" strokeOpacity="0.35" strokeWidth="1.5" filter="url(#bd-glow)" />
-        </g>
-        <path className="ridge near" d={NEAR} fill="url(#bd-near)" />
-        <rect y="392" width={W} height="28" fill="url(#bd-water)" />
-        <ellipse className="glint" cx="600" cy="400" rx="260" ry="10" fill="url(#bd-glint)" />
-      </svg>
-      <Particles intense={intense} />
+      <div className="ridges">
+        <Ridge className="far" path={FAR} fill="bd-far" stops={["#1b4596", "#0a1a44"]} rim={{ color: "#6fb1ff", opacity: 0.55, width: 2 }} />
+        <Ridge className="mid" path={MID} fill="bd-mid" stops={["#10306e", "#071433"]} rim={{ color: "#4a8fff", opacity: 0.35, width: 1.5 }} />
+        <Ridge className="near" path={NEAR} fill="bd-near" stops={["#0a1c45", "#040b20"]} />
+        <div className="water" />
+        <div className="glint" />
+      </div>
+      <Particles intense={intense} still={still} />
     </div>
   );
 }

@@ -11,28 +11,30 @@ export type Screen =
   | "realtime"
   | "quarantine"
   | "systemcare"
+  | "settings"
   | "about";
 
 interface Entry {
   id: Screen;
   label: string;
   icon: IconName;
-  planned?: boolean;
 }
 
 const ENTRIES: Entry[] = [
   { id: "overview", label: "Přehled", icon: "home" },
-  { id: "scan", label: "Kontrola souborů", icon: "search" },
+  { id: "scan", label: "Kontrola počítače", icon: "search" },
   { id: "results", label: "Výsledky", icon: "results" },
+  { id: "realtime", label: "Ochrana v reálném čase", icon: "shield" },
+  { id: "quarantine", label: "Karanténa", icon: "box" },
+  { id: "systemcare", label: "Bezpečnost systému", icon: "gauge" },
   { id: "events", label: "Události", icon: "clock" },
-  { id: "realtime", label: "Ochrana v reálném čase", icon: "shield", planned: true },
-  { id: "quarantine", label: "Karanténa", icon: "box", planned: true },
-  { id: "systemcare", label: "System Care", icon: "gauge", planned: true },
+  { id: "settings", label: "Nastavení", icon: "sliders" },
   { id: "about", label: "O aplikaci", icon: "info" },
 ];
 
 const LEVEL: Record<ProtectionLevel, { text: string; tone: string }> = {
   protected: { text: "Ochrana aktivní", tone: "good" },
+  monitored: { text: "Hlídání běží", tone: "good" },
   manualScanOnly: { text: "Ruční kontrola připravená", tone: "caution" },
   notReady: { text: "Kontrola není připravená", tone: "alert" },
 };
@@ -43,12 +45,14 @@ export function Sidebar({
   info,
   level,
   scanRunning,
+  quarantineCount,
 }: {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
   info: EngineInfo | null;
   level: ProtectionLevel | null;
   scanRunning: boolean;
+  quarantineCount: number;
 }) {
   const status = level ? LEVEL[level] : null;
   return (
@@ -66,14 +70,16 @@ export function Sidebar({
             <li key={entry.id}>
               <button
                 type="button"
-                className={`nav-item${screen === entry.id ? " is-active" : ""}${entry.planned ? " is-planned" : ""}`}
+                className={`nav-item${screen === entry.id ? " is-active" : ""}`}
                 aria-current={screen === entry.id ? "page" : undefined}
                 onClick={() => onNavigate(entry.id)}
               >
                 <Icon name={entry.icon} />
                 <span>{entry.label}</span>
                 {entry.id === "scan" && scanRunning ? <span className="nav-badge">běží</span> : null}
-                {entry.planned ? <span className="nav-tag">plán</span> : null}
+                {entry.id === "quarantine" && quarantineCount > 0 ? (
+                  <span className="nav-tag">{quarantineCount}</span>
+                ) : null}
               </button>
             </li>
           ))}

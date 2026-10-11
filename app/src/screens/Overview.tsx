@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import { Backdrop } from "../components/Backdrop";
 import { Emblem } from "../components/Emblem";
 import { Icon, type IconName } from "../components/Icon";
@@ -5,6 +6,7 @@ import type { Screen } from "../components/Sidebar";
 import { TileArt, type TileArtKind } from "../components/TileArt";
 import {
   COMPONENT_LABELS,
+  SHIELD_LAYERS,
   describeAuditEvent,
   describeOutcome,
   formatCount,
@@ -13,6 +15,7 @@ import {
   formatTime,
   headline,
   platformName,
+  relativeTime,
   stateTone,
   type Tone,
 } from "../lib/format";
@@ -22,28 +25,31 @@ import { useCountUp } from "../lib/useCountUp";
 
 const LAYERS: { kind: ComponentKind; icon: IconName; desc: string }[] = [
   { kind: "onDemandScan", icon: "search", desc: "Soubory, které vyberete" },
-  { kind: "realTimeProtection", icon: "shield", desc: "Průběžné sledování" },
-  { kind: "webProtection", icon: "globe", desc: "Stažené soubory" },
+  { kind: "realTimeProtection", icon: "shield", desc: "Nové soubory ve složkách" },
+  { kind: "webProtection", icon: "globe", desc: "Blokování webů" },
   { kind: "emailProtection", icon: "mail", desc: "Přílohy a odkazy" },
   { kind: "privacyProtection", icon: "lock", desc: "Osobní data" },
 ];
 
-const HEALTH: { kind: ComponentKind; label: string; icon: IconName }[] = [
-  { kind: "detectionEngine", label: "Engine", icon: "engine" },
-  { kind: "rulePack", label: "Pravidla", icon: "key" },
-  { kind: "auditLog", label: "Audit", icon: "doc" },
+const HEALTH: { kind: ComponentKind; label: string }[] = [
+  { kind: "detectionEngine", label: "Engine" },
+  { kind: "rulePack", label: "Pravidla" },
+  { kind: "updates", label: "Aktualizace" },
+  { kind: "quarantine", label: "Karanténa" },
+  { kind: "auditLog", label: "Audit" },
 ];
 
 const PILL: Record<ProtectionLevel, { text: string; tone: Tone }> = {
   protected: { text: "Vše funguje správně", tone: "good" },
+  monitored: { text: "Hlídání běží", tone: "good" },
   manualScanOnly: { text: "Jen ruční kontrola", tone: "caution" },
   notReady: { text: "Kontrola není připravená", tone: "alert" },
 };
 
-const TILES: { n: string; title: string; text: string; art: TileArtKind; screen: Screen; planned: boolean }[] = [
-  { n: "01", title: "Kontrola souborů", text: "Prověřte vybrané dokumenty, aplikace a složky.", art: "folder", screen: "scan", planned: false },
-  { n: "02", title: "Ochrana v reálném čase", text: "Plánováno pro další verze.", art: "lock", screen: "realtime", planned: true },
-  { n: "03", title: "System Care", text: "Plánováno pro další verze.", art: "wrench", screen: "systemcare", planned: true },
+const TILES: { n: string; title: string; text: string; art: TileArtKind; screen: Screen }[] = [
+  { n: "01", title: "Kontrola počítače", text: "Rychlá, úplná nebo jen vybrané složky.", art: "folder", screen: "scan" },
+  { n: "02", title: "Ochrana v reálném čase", text: "Hlídá stažené soubory, Plochu a Dokumenty.", art: "lock", screen: "realtime" },
+  { n: "03", title: "Bezpečnost systému", text: "Gatekeeper, SIP, FileVault a firewall.", art: "wrench", screen: "systemcare" },
 ];
 
 function layerText(kind: ComponentKind, state: ComponentState): string {
@@ -51,7 +57,7 @@ function layerText(kind: ComponentKind, state: ComponentState): string {
     case "running":
       return kind === "onDemandScan" ? "Připraveno" : "Aktivní";
     case "notImplemented":
-      return "Není ve v0.1";
+      return "Zatím není";
     case "disabled":
       return "Vypnuto";
     case "degraded":
@@ -65,6 +71,7 @@ function eventTone(event: AuditEvent): Tone {
   switch (event.kind) {
     case "finding":
     case "rule_pack_rejected":
+    case "quarantine_failed":
       return "alert";
     case "audit_integrity_issue":
       return "caution";
@@ -79,50 +86,65 @@ function Count({ value }: { value: number }) {
   return <>{useCountUp(value).toLocaleString("cs-CZ")}</>;
 }
 
+/** Pozadí karty se mění jen se stavem kontroly, ne s každým průběhem. */
+const HeroBackdrop = memo(function HeroBackdrop({ intense, still }: { intense: boolean; still: boolean }) {
+  return <Backdrop intense={intense} still={still} />;
+});
+
 export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Screen) => void }) {
-  const { protection, summary, events, info, scan } = app;
+  const { protection, summary, events, info, scan, runtime } = app;
+  const components = protection?.components;
+  const layers = useMemo(
+    () =>
+      SHIELD_LAYERS.map((kind) => {
+        const state = components?.find((c) => c.kind === kind)?.state;
+        return state ? stateTone(state) : "off";
+      }).join(","),
+    [components],
+  );
   if (!protection) {
     return <p className="muted">Načítám stav enginu…</p>;
   }
-  const h = headline(protection.level, protection.components);
+  const device = info?.platform.startsWith("macos") ? "Mac" : "počítač";
+  const h = headline(protection.level, protection.components, device);
   const ready = protection.level !== "notReady";
   const pill = PILL[protection.level];
   const stateOf = (kind: ComponentKind) =>
     protection.components.find((c) => c.kind === kind)?.state ?? ({ type: "notImplemented" } as ComponentState);
 
-  const title = scan.running ? "Kontrola právě běží" : h.title;
+  const pending = summary?.findings.filter((f) => app.cleaning[f.path] === undefined) ?? [];
+  // Nevyčištěné skutečné nálezy mají přednost před běžným stavem ochrany.
+  const threats = scan.running ? [] : pending.filter((f) => !f.testOnly);
+  const tone = scan.running ? "good" : threats.length ? "alert" : h.tone;
+  const title = scan.running ? "Kontrola právě běží" : threats.length ? "Pozor, nalezené hrozby" : h.title;
   const words = title.split(" ");
   const accent = words.pop() ?? "";
   const detail = scan.running
     ? `Zkontrolováno ${formatCount(scan.progress?.filesScanned ?? 0, "soubor", "soubory", "souborů")}.`
-    : h.detail;
-
-  const startWith = async (kind: "folders" | "files") => {
-    await app.pick(kind);
-    onNavigate("scan");
-  };
+    : threats.length
+      ? `${formatCount(threats.length, "nález čeká", "nálezy čekají", "nálezů čeká")} na vyčištění. Vyčištění je přesune do karantény, odkud je jde obnovit.`
+      : h.detail;
 
   const pack = info?.rulePack;
   const validity = pack
-    ? Math.max(0, Math.min(1, (pack.expiresAtUnix - Date.now() / 1000) / (pack.expiresAtUnix - pack.createdAtUnix)))
+    ? Math.max(0, Math.min(1, (pack.expiresAtUnix - Date.now() / 1000) / Math.max(1, pack.expiresAtUnix - pack.createdAtUnix)))
     : 0;
 
   return (
     <div className="overview">
-      <section className={`hero reveal d1 tone-${scan.running ? "good" : h.tone}`} aria-labelledby="hero-title">
-        <Backdrop intense={scan.running} />
+      <section className={`hero reveal d1 tone-${tone}`} aria-labelledby="hero-title">
+        <HeroBackdrop intense={scan.running} still={Boolean(app.settings?.reducedMotion)} />
         <p className="hero-tag left">
           <strong>H&amp;H AntiShield</strong>
           <br />
-          Ruční kontrola souborů
+          Antivirus &amp; System Protection
         </p>
         <p className="hero-tag right">
           <strong>Verze {__APP_VERSION__}</strong>
           <br />
           {info ? platformName(info.platform) : ""}
         </p>
-        <Emblem components={protection.components} scanning={scan.running} />
-        <p className="hero-title">H&amp;H AntiShield</p>
+        <Emblem layers={layers} scanning={scan.running} />
         <h1 id="hero-title" className="hero-headline">
           {words.join(" ")} <em>{accent}</em>
         </h1>
@@ -133,17 +155,23 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
             <span>Zobrazit průběh</span>
             <Icon name="chevron" size={20} className="cta-chev" />
           </button>
+        ) : threats.length ? (
+          <button type="button" className="cta cta-alert" onClick={() => void app.remediate(threats.map((f) => f.path))}>
+            <Icon name="sparkle" size={22} />
+            <span>Vyčistit vše</span>
+            <Icon name="chevron" size={20} className="cta-chev" />
+          </button>
         ) : (
           <>
-            <button type="button" className="cta" disabled={!ready} onClick={() => void startWith("folders")}>
-              <Icon name="search" size={22} />
-              <span>Spustit kontrolu</span>
+            <button type="button" className="cta" disabled={!ready} onClick={() => void app.startPreset("quick")}>
+              <Icon name="bolt" size={22} />
+              <span>Rychlá kontrola</span>
               <Icon name="chevron" size={20} className="cta-chev" />
             </button>
             <p className="hero-alt">
               nebo{" "}
-              <button type="button" className="btn-link" disabled={!ready} onClick={() => void startWith("files")}>
-                vybrat jednotlivé soubory
+              <button type="button" className="btn-link" onClick={() => onNavigate("scan")}>
+                úplná a vlastní kontrola
               </button>
             </p>
           </>
@@ -164,6 +192,10 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
         <ul className="layers">
           {LAYERS.map((layer) => {
             const state = stateOf(layer.kind);
+            const desc =
+              layer.kind === "realTimeProtection" && runtime?.watched.length
+                ? `Hlídá ${formatCount(runtime.watched.length, "složku", "složky", "složek")}`
+                : layer.desc;
             return (
               <li key={layer.kind} className={`layer-row tone-${stateTone(state)}`}>
                 <span className="icon-tile">
@@ -171,7 +203,7 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
                 </span>
                 <span>
                   <span className="layer-name">{COMPONENT_LABELS[layer.kind]}</span>
-                  <span className="layer-desc">{layer.desc}</span>
+                  <span className="layer-desc">{desc}</span>
                 </span>
                 <span className="layer-state">
                   {layerText(layer.kind, state)}
@@ -206,10 +238,10 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
         {summary ? (
           <>
             <p className="big-date">{formatDateTime(summary.finishedAtMs)}</p>
-            <p className={summary.findings.length ? "tone-text-alert" : "muted"}>
-              {summary.findings.length
-                ? `${formatCount(summary.findings.length, "nález", "nálezy", "nálezů")}, otevřete výsledky.`
-                : `${describeOutcome(summary.outcome)}, žádná shoda s pravidly.`}
+            <p className={pending.length ? "tone-text-alert" : "muted"}>
+              {pending.length
+                ? `${formatCount(pending.length, "nález čeká", "nálezy čekají", "nálezů čeká")} na vyčištění.`
+                : `${describeOutcome(summary.outcome)}, žádná hrozba nečeká.`}
             </p>
             <div className="mini-stats">
               <span>
@@ -231,9 +263,14 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
                 přeskočeno
               </span>
             </div>
+            {pending.length ? (
+              <button type="button" className="btn-danger" onClick={() => void app.remediate(pending.map((f) => f.path))}>
+                <Icon name="sparkle" size={18} /> Vyčistit vše
+              </button>
+            ) : null}
           </>
         ) : (
-          <p className="muted">Zatím žádná kontrola. Spusťte ji tlačítkem nahoře.</p>
+          <p className="muted">Zatím žádná kontrola. Spusťte rychlou kontrolu tlačítkem nahoře.</p>
         )}
       </section>
 
@@ -255,14 +292,14 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
                 </strong>
               </li>
               <li>
-                <span>Pravidel</span>
+                <span>Pravidel YARA</span>
                 <strong>
-                  <Count value={pack.ruleCount} />
+                  <Count value={pack.yaraRuleCount} />
                 </strong>
               </li>
               <li>
-                <span>Verze</span>
-                <strong>{pack.version}</strong>
+                <span>Aktualizace</span>
+                <strong>{runtime?.rules.lastSuccessMs ? relativeTime(runtime.rules.lastSuccessMs) : "zatím ne"}</strong>
               </li>
             </ul>
             <div className="meter">
@@ -274,7 +311,7 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
             </div>
           </>
         ) : (
-          <p className="muted">Sada pravidel není načtená.</p>
+          <p className="muted">Sada pravidel se načítá…</p>
         )}
       </section>
 
@@ -312,18 +349,18 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
       <div className="tiles">
         {TILES.map((tile, i) => (
           <button
-          key={tile.n}
-          type="button"
-          className={`tile t${i + 1} reveal d${6 + i}${tile.planned ? " is-planned" : ""}`}
-          onClick={() => onNavigate(tile.screen)}
-        >
-          <span className="tile-num">{tile.n}</span>
-          <span className="tile-go" aria-hidden="true">
-            <Icon name="chevron" />
-          </span>
-          <TileArt kind={tile.art} />
-          <span className="tile-title">{tile.title}</span>
-          <span className="tile-text">{tile.text}</span>
+            key={tile.n}
+            type="button"
+            className={`tile t${i + 1} reveal d${6 + i}`}
+            onClick={() => onNavigate(tile.screen)}
+          >
+            <span className="tile-num">{tile.n}</span>
+            <span className="tile-go" aria-hidden="true">
+              <Icon name="chevron" />
+            </span>
+            <TileArt kind={tile.art} />
+            <span className="tile-title">{tile.title}</span>
+            <span className="tile-text">{tile.text}</span>
           </button>
         ))}
       </div>

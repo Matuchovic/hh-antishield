@@ -1,6 +1,23 @@
-import { formatBytes, formatCount, formatDuration } from "../lib/format";
-import type { AntiShield } from "../lib/useAntiShield";
+import { Icon, type IconName } from "../components/Icon";
 import type { Screen } from "../components/Sidebar";
+import { formatBytes, formatCount, formatDuration } from "../lib/format";
+import type { PresetScan } from "../lib/types";
+import type { AntiShield } from "../lib/useAntiShield";
+
+const PRESETS: { kind: PresetScan; icon: IconName; title: string; text: string }[] = [
+  {
+    kind: "quick",
+    icon: "bolt",
+    title: "Rychlá kontrola",
+    text: "Běžící programy, položky spouštěné po přihlášení, Stažené soubory a Plocha. Pár minut.",
+  },
+  {
+    kind: "full",
+    icon: "shield",
+    title: "Úplná kontrola",
+    text: "Celá domovská složka a nainstalované aplikace. Trvá déle, běží na pozadí.",
+  },
+];
 
 export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Screen) => void }) {
   const { scan, selection } = app;
@@ -11,7 +28,7 @@ export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Scr
     return (
       <div className="screen">
         <h1>Kontrola běží</h1>
-        <p className="muted">{scan.roots.join(", ")}</p>
+        {scan.roots.length ? <p className="muted roots">{scan.roots.join(", ")}</p> : null}
         <div className="progress-track" role="progressbar" aria-label="Kontrola běží" aria-busy="true">
           <span />
         </div>
@@ -30,14 +47,18 @@ export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Scr
           </div>
           <div>
             <dt>Nálezy</dt>
-            <dd className={(p?.findings ?? 0) > 0 ? "text-alert" : undefined}>{p?.findings ?? 0}</dd>
+            <dd className={(p?.findings ?? 0) > 0 ? "tone-text-alert" : undefined}>{p?.findings ?? 0}</dd>
           </div>
           <div>
             <dt>Čas</dt>
             <dd>{formatDuration(p?.elapsedMs ?? 0)}</dd>
           </div>
         </dl>
-        {p?.currentPath ? <p className="current-path" title={p.currentPath}>{p.currentPath}</p> : null}
+        {p?.currentPath ? (
+          <p className="current-path" title={p.currentPath}>
+            {p.currentPath}
+          </p>
+        ) : null}
         {scan.liveFindings.length ? (
           <ul className="live-findings">
             {scan.liveFindings.map((f, i) => (
@@ -58,18 +79,46 @@ export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Scr
 
   return (
     <div className="screen">
-      <h1>Kontrola souborů</h1>
+      <h1>Kontrola počítače</h1>
       <p className="lede">
-        Vyberte složky nebo soubory. Aplikace je jen přečte a porovná s pravidly; nic nemaže ani
-        nepřesouvá.
+        Kontrola soubory jen čte a porovná je s pravidly. Nalezené hrozby pak jedním kliknutím
+        vyčistíte: přesunou se do karantény, odkud je jde obnovit.
       </p>
-      <div className="actions">
-        <button type="button" className="btn-secondary" disabled={!ready} onClick={() => void app.pick("folders")}>
-          Vybrat složky
-        </button>
-        <button type="button" className="btn-secondary" disabled={!ready} onClick={() => void app.pick("files")}>
-          Vybrat soubory
-        </button>
+
+      <div className="preset-grid">
+        {PRESETS.map((preset) => (
+          <button
+            key={preset.kind}
+            type="button"
+            className="preset"
+            disabled={!ready}
+            onClick={() => void app.startPreset(preset.kind)}
+          >
+            <span className="icon-tile big">
+              <Icon name={preset.icon} size={26} />
+            </span>
+            <span className="preset-title">{preset.title}</span>
+            <span className="preset-text">{preset.text}</span>
+            <span className="preset-go">
+              Spustit <Icon name="chevron" size={16} />
+            </span>
+          </button>
+        ))}
+        <div className="preset custom">
+          <span className="icon-tile big">
+            <Icon name="folder" size={26} />
+          </span>
+          <span className="preset-title">Vlastní kontrola</span>
+          <span className="preset-text">Vyberte konkrétní složky nebo soubory.</span>
+          <span className="actions">
+            <button type="button" className="btn-secondary" disabled={!ready} onClick={() => void app.pick("folders")}>
+              Složky
+            </button>
+            <button type="button" className="btn-secondary" disabled={!ready} onClick={() => void app.pick("files")}>
+              Soubory
+            </button>
+          </span>
+        </div>
       </div>
 
       {selection ? (
@@ -89,11 +138,9 @@ export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Scr
             </button>
           </div>
         </section>
-      ) : (
-        <p className="muted">Zatím nic nevybráno.</p>
-      )}
+      ) : null}
 
-      {app.summary && !app.scan.running ? (
+      {app.summary ? (
         <p>
           Poslední kontrola je hotová.{" "}
           <button type="button" className="btn-link" onClick={() => onNavigate("results")}>
@@ -103,12 +150,12 @@ export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Scr
       ) : null}
 
       <section className="panel limits" aria-labelledby="limits-title">
-        <h2 id="limits-title">Co kontrola dělá a co ne</h2>
+        <h2 id="limits-title">Co kontrola dělá</h2>
         <ul>
-          <li>Porovná SHA-256 celých souborů a bajtové vzory s testovací sadou pravidel.</li>
+          <li>Porovná soubory s podepsanou sadou pravidel: otisky SHA-256, bajtové vzory a pravidla YARA.</li>
+          <li>Rozbalí archivy ZIP (s ochranou proti „zip bombám“); šifrované a vnořené archivy jen označí.</li>
           <li>Nesleduje symbolické odkazy, nestahuje soubory z iCloudu ani OneDrivu a přeskočí síťové disky.</li>
-          <li>Archivy (ZIP, DMG a další) nerozbaluje; jejich obsah se nekontroluje.</li>
-          <li>Soubory větší než 4 GB přeskočí a uvede je ve výsledku.</li>
+          <li>Pravidla YARA dostanou soubory do 32 MB; větší se zkontrolují otisky a jsou ve výsledku označené.</li>
         </ul>
       </section>
     </div>

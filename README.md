@@ -1,18 +1,20 @@
 # H&H AntiShield
 
-Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.1 je ruční
-skener souborů**: kontroluje jen soubory a složky, které uživatel vybere.
-Ochranu v reálném čase, karanténu ani automatické aktualizace pravidel zatím
-nemá a aplikace to na přehledu otevřeně říká. Přesný stav je v
-[docs/feature-status.md](docs/feature-status.md).
+Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.2**
+kontroluje soubory pravidly YARA a otisky, hlídá vybrané složky v reálném
+čase, nálezy jedním kliknutím přesune do karantény (a ukončí škodlivý proces
+nebo vypne jeho spouštění po přihlášení), sama si aktualizuje podepsaná
+pravidla i aplikaci a ukáže stav ochran vestavěných v systému. Spouštění
+programů zatím neblokuje a aplikace to na přehledu otevřeně říká. Přesný stav
+je v [docs/feature-status.md](docs/feature-status.md).
 
 Projekt je samostatný: nesdílí kód, účty, klíče ani nasazení s hhsecurity
 ani hhcloud.
 
-## Instalace (v0.1, bez App Store)
+## Instalace (bez App Store)
 
-Balíčky staví GitHub Actions (workflow **Release**) a jsou ke stažení jako
-artefakty běhu, později z webu AntiShieldu.
+Balíčky jsou ke stažení na
+[GitHub Releases](https://github.com/Matuchovic/hh-antishield/releases/latest).
 
 **macOS 12 a novější (Apple Silicon i Intel)** – soubor `.dmg`:
 1. Otevřete DMG a přetáhněte H&H AntiShield do Aplikací.
@@ -28,11 +30,18 @@ zatím není podepsaný: *Další informace → Přesto spustit*.
 
 Před instalací porovnejte SHA-256 souboru s `SHA256SUMS-*.txt` z téhož vydání.
 
-**Aktualizace:** od verze 0.1.1 si aplikace sama hlídá nové verze na GitHub
-Releases. Když nějaká vyjde, ukáže nahoře banner *Aktualizovat*; stáhne ji,
-ověří podpis (Ed25519) a po restartu běží nová verze. Ručně se instaluje jen
-první verze s aktualizacemi. Vydání: `git tag -a vX.Y.Z -m "poznámky"` a push
-značky (verze v `package.json`, `tauri.conf.json` a `Cargo.toml` musí sedět).
+**Aktualizace aplikace:** od verze 0.1.1 si aplikace sama hlídá nové verze
+(po startu, každých 5 minut a při návratu do okna). Když nějaká vyjde, ukáže
+banner *Aktualizovat*; stáhne ji, ověří podpis (Ed25519) a po restartu běží
+nová verze. Vydání: zvýšit verzi v `app/package.json`, `tauri.conf.json`
+a `Cargo.toml`, sloučit do `main`, pak *Actions → Release → Run workflow*
+se zaškrtnutým *publish*.
+
+**Aktualizace pravidel:** workflow *Rules* jednou týdně sestaví sadu z YARA
+Forge (jen licence vhodné ke komerčnímu použití), podepíše ji klíčem
+`hh-rules-2026-10` (secret `RULES_SIGNING_KEY`), ověří self-testem a bez
+falešných poplachů na čistém macOS a zveřejní ji ve vydání `rules`. Aplikace
+ji stahuje každých 6 hodin a nainstaluje jen platně podepsanou novější sadu.
 
 ## Vývoj
 
@@ -51,20 +60,26 @@ cd app && npm run tauri build                      # balíček; potřebuje TAURI
 | --- | --- |
 | `crates/antishield-core` | engine: podepsaná pravidla, skener, audit, stav komponent |
 | `crates/antishield-cli` | příkaz `antishield` (kontrola, self-test, podpis pravidel) |
-| `app/src-tauri` | backend aplikace: příkazy pro rozhraní, nativní dialog |
+| `app/src-tauri` | backend aplikace: příkazy pro rozhraní, hlídání, plánování, lišta |
 | `app/src` | rozhraní (React, TypeScript) |
-| `rules` | testovací sada pravidel, podpis a veřejný klíč |
+| `rules` | základ produkční sady, testovací sada, self-test YARA, veřejné klíče |
 
 ## Bezpečnost
 
 - Sada pravidel je podepsaná Ed25519; engine ověří podpis dřív, než obsah
-  přečte. Testovacím klíčem `hh-test-2026-10` smí být podepsaná jen testovací
-  sada. Soukromé klíče nikdy nepatří do repozitáře ani na Vercel.
+  přečte, odmítne starší sadu a novou nasadí jen po úspěšném self-testu.
+  Testovacím klíčem `hh-test-2026-10` smí být podepsaná jen testovací sada.
+  Soukromé klíče nikdy nepatří do repozitáře ani na Vercel.
+- Karanténa ověří, že jde o stejný soubor, jaký kontrola našla (otisk
+  a identita), obsah znehodnotí a při obnově nic nepřepíše. Proces ukončí
+  jen tehdy, když jeho spustitelný soubor je nalezený soubor.
+- Bezpečnost systému jen čte stav (Gatekeeper, SIP, FileVault, firewall,
+  Defender); aplikace ochrany systému nikdy nevypíná ani nemění.
 - Testy používají jen neškodné vzorky (EICAR, syntetická data, značky).
   Skutečný malware do repozitáře nepatří.
-- Rozhraní smí volat jen 8 příkazů povolených v
+- Rozhraní smí volat jen 21 příkazů povolených v
   `app/src-tauri/capabilities/default.json`; cesty ke kontrole vybírá nativní
-  dialog v backendu. App Sandbox je vypnutý, protože aplikace v sandboxu se
+  dialog v backendu a vyčistit jde jen nález, který backend sám vytvořil. App Sandbox je vypnutý, protože aplikace v sandboxu se
   nemůže sama aktualizovat; aktualizace přijme jen s platným podpisem.
 - Auditní log je řetězený SHA-256 (`antishield audit verify`).
 
@@ -73,5 +88,6 @@ Zranitelnost hlaste přímo vývojovému týmu H&H, ne veřejným issue.
 ## Licence
 
 Proprietární software H&H, viz [LICENSE](LICENSE). Knihovny třetích stran
-mají vlastní licence (MIT, Apache-2.0, BSD-3-Clause, OFL a další); politiku
-hlídá `cargo deny` podle `deny.toml`.
+mají vlastní licence (MIT, Apache-2.0, BSD-3-Clause, ISC, CC0, OFL a další);
+politiku hlídá `cargo deny` podle `deny.toml`. Pravidla YARA mají licence
+svých autorů (přehled v aplikaci, *O aplikaci → Zdroje pravidel*).

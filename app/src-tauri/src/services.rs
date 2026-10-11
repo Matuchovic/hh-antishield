@@ -10,7 +10,7 @@ use antishield_core::watch::FolderWatcher;
 use antishield_core::{
     InspectResult, RuleUpdateOutcome, ScanEvent, ScanObserver, ScanRequest, ScanSummary,
 };
-use chrono::{Datelike, Local, TimeZone};
+use chrono::{DateTime, Datelike, Local, TimeZone};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
@@ -288,10 +288,20 @@ fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
 
 /// Poslední plánovaný okamžik (ms) nejpozději teď, v místním čase.
 fn last_due_ms(schedule: Schedule, hour: u8, weekday: u8) -> Option<u64> {
+    last_due_at(&Local::now(), schedule, hour, weekday)
+}
+
+/// Poslední plánovaný okamžik, který už nastal (nejvýš týden zpět).
+/// `weekday`: 1 = pondělí … 7 = neděle.
+fn last_due_at<Tz: TimeZone>(
+    now: &DateTime<Tz>,
+    schedule: Schedule,
+    hour: u8,
+    weekday: u8,
+) -> Option<u64> {
     if schedule == Schedule::Off {
         return None;
     }
-    let now = Local::now();
     for back in 0..8u64 {
         let date = now.date_naive() - chrono::Days::new(back);
         if schedule == Schedule::Weekly && date.weekday().number_from_monday() != u32::from(weekday)
@@ -301,11 +311,11 @@ fn last_due_ms(schedule: Schedule, hour: u8, weekday: u8) -> Option<u64> {
         // Neexistující čas (posun na letní čas) se přeskočí.
         let Some(at) = date
             .and_hms_opt(u32::from(hour), 0, 0)
-            .and_then(|naive| Local.from_local_datetime(&naive).earliest())
+            .and_then(|naive| now.timezone().from_local_datetime(&naive).earliest())
         else {
             continue;
         };
-        if at <= now {
+        if at <= *now {
             return u64::try_from(at.timestamp_millis()).ok();
         }
     }
@@ -353,4 +363,55 @@ pub fn start_scheduler(app: AppHandle) {
             }
         })
         .ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::last_due_at;
+    use crate::settings::Schedule;
+    use chrono::{TimeZone, Utc};
+
+    fn at(d: u32, h: u32) -> chrono::DateTime<Utc> {
+        // Říjen 2026: 12. je pondělí, 14. středa.
+        Utc.with_ymd_and_hms(2026, 10, d, h, 0, 0)
+            .single()
+            .expect("valid time")
+    }
+
+    fn ms(t: chrono::DateTime<Utc>) -> Option<u64> {
+        u64::try_from(t.timestamp_millis()).ok()
+    }
+
+    #[test]
+    fn daily_schedule_uses_today_once_the_hour_passed() {
+        assert_eq!(
+            last_due_at(&at(14, 13), Schedule::Daily, 12, 1),
+            ms(at(14, 12))
+        );
+        assert_eq!(
+            last_due_at(&at(14, 11), Schedule::Daily, 12, 1),
+            ms(at(13, 12))
+        );
+    }
+
+    #[test]
+    fn weekly_schedule_finds_the_last_matching_weekday() {
+        assert_eq!(
+            last_due_at(&at(14, 13), Schedule::Weekly, 12, 1),
+            ms(at(12, 12))
+        );
+        assert_eq!(
+            last_due_at(&at(14, 11), Schedule::Weekly, 12, 3),
+            ms(at(7, 12))
+        );
+        assert_eq!(
+            last_due_at(&at(14, 12), Schedule::Weekly, 12, 3),
+            ms(at(14, 12))
+        );
+    }
+
+    #[test]
+    fn disabled_schedule_is_never_due() {
+        assert_eq!(last_due_at(&at(14, 13), Schedule::Off, 12, 3), None);
+    }
 }

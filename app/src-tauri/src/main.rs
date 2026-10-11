@@ -31,6 +31,7 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Otevřít H&H AntiShield", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, "quick", "Rychlá kontrola", true, None::<&str>)?;
@@ -91,7 +92,12 @@ fn main() {
         .setup(move |app| {
             let data_dir = app.path().app_data_dir()?;
             app.manage(AppState::new(data_dir));
-            build_tray(app.handle())?;
+            // Lišta na macOS a Windows. Linux (jen vývoj) ji vynechá: knihovna
+            // appindicator tam nemusí být a její načtení končí pádem.
+            #[cfg(not(target_os = "linux"))]
+            if let Err(err) = build_tray(app.handle()) {
+                eprintln!("tray: {err}");
+            }
             if !start_hidden {
                 show_main_window(app.handle());
             }

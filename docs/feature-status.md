@@ -1,38 +1,42 @@
-# Stav funkcí – v0.1
+# Stav funkcí – v0.2
 
-Platí pravidlo: aplikace nikdy netvrdí, že počítač chrání, pokud příslušná
-komponenta neběží a není ověřená. V0.1 proto hlásí „Ruční kontrola je
-připravená“, nikoli „Chráněno“.
+Platí pravidlo: aplikace nikdy netvrdí ochranu, kterou nemá. V0.2 hlásí
+„Váš Mac je hlídaný“, jen když skutečně běží hlídání složek i ověřené
+aktualizace pravidel; jinak „Ruční kontrola je připravená“ s důvodem.
+Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 
 ## Hotovo a ověřeno testy
 
 | Funkce | Ověření |
 | --- | --- |
-| Ruční kontrola vybraných souborů a složek | integrační testy `scan.rs`, smoke test CLI |
-| SHA-256 indikátory, bajtové vzory přes hranice bloků, standardní EICAR | `matcher.rs` (proptest), `selftest` |
-| Podepsaná sada pravidel (Ed25519, verze, platnost, testovací klíč jen pro testovací sadu) | `rules.rs` |
-| Bezpečné procházení: bez následování odkazů, jiné disky, FIFO/sokety, hardlinky, hluboké cesty, soubory > 4 GiB | `scan.rs` |
-| Průběh, zrušení (do 2 s), zaseknuté čtení (watchdog), izolace pádů na soubor | `scan.rs` |
-| Vysvětlené nálezy (pravidlo, důkaz, závažnost, testovací příznak) | `scan.rs`, rozhraní |
-| Auditní log s řetězením SHA-256, rotací a ověřením | `audit.rs` |
-| Pravdivý souhrn stavu (tabulka všech kombinací) | unit testy `status.rs`, `format.test.ts` |
-| Self-test enginu při startu a na vyžádání | `engine.rs`, `--self-test` |
-| Aplikace Tauri: přehled, kontrola, výsledky, události, o aplikaci | překlad + spuštění na Linuxu (Xvfb) |
+| Kontrola: rychlá (Stažené soubory, Plocha, běžící programy, položky po přihlášení), úplná (domovská složka a aplikace), vlastní | `scan.rs`, CLI, rozhraní |
+| Detekce: SHA-256, bajtové vzory přes hranice bloků, EICAR, pravidla YARA (YARA-X) | `matcher.rs`, `scan.rs`, self-test |
+| Produkční sada pravidel z YARA Forge core, jen licence vhodné ke komerčnímu použití | `forge.rs`; řetězec sestavení → podpis → ověření → self-test → nález ověřen lokálně produkčním klíčem |
+| Aktualizace pravidel: podpis Ed25519, ochrana proti starší verzi, self-test před instalací, návrat k zabudované sadě | `engine.rs` |
+| ZIP v paměti s limity (položky, velikost, poměr komprese); vnořené a šifrované archivy se označí | `scan.rs` |
+| Karanténa: kontrola otisku a identity souboru, znehodnocení obsahu, obnova bez přepisu, smazání | `engine.rs` |
+| Vyčištění souboru jedním kliknutím (do karantény) | `engine.rs`, rozhraní |
+| Hlídání složek v reálném čase: nové a změněné soubory, částečná stahování se ignorují | test hlídání v CI (Linux, macOS, Windows) |
+| Plánovaná kontrola denně / týdně, zmeškaná doběhne po spuštění | unit testy `services.rs` |
+| Nastavení (ochrana, karanténa, oznámení, plán, aktualizace, spouštění, zvuk a animace) | unit test `settings.rs`, rozhraní |
+| Auditní log s řetězením SHA-256, pravdivý souhrn stavu, self-test | `audit.rs`, `status.rs`, `format.test.ts` |
+| Aktualizace aplikace přes banner (podpis, GitHub Releases) | vydání 0.1.1 a 0.1.2 |
 
 ## Částečně
 
 | Funkce | Co chybí |
 | --- | --- |
-| Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené (chyba čtení) |
-| Archivy (ZIP, DMG, …) | rozpoznají se a započítají jako „nerozbalené“, obsah se nekontroluje |
-| macOS a Windows specifika (O_NOFOLLOW_ANY, dataless soubory, reparse points) | testy prošly v CI na macOS i Windows; chybí ruční test na skutečném zařízení |
-| Aktualizace aplikace (banner, podpis Ed25519, GitHub Releases) | hotovo od 0.1.1; celý průběh se ověří až vydáním 0.1.2 |
+| Ukončení škodlivého procesu a vypnutí položky po přihlášení | implementováno; chybí ruční test na skutečném Macu a Windows |
+| Bezpečnost systému (Gatekeeper, SIP, FileVault, firewall, XProtect; na Windows Defender a firewall) | jen čte stav a radí, nic nemění; přeloženo v CI, chybí ověření na zařízení |
+| Oznámení, ikona v liště, spuštění po přihlášení | přeloženo v CI pro macOS i Windows; chybí ruční test |
+| Animace a plynulost | animují se jen transformace a průhlednost, bez rozmazání v pohyblivých vrstvách; ověřeno v Chromiu (jádro WebView2) a WebKitGTK, na Macu ověří uživatel |
+| Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené |
+| Jiné archivy než ZIP (DMG, PKG, RAR, 7z) | rozpoznají se a započítají jako „nerozbalené“ |
 | App Sandbox na macOS | vypnutý kvůli aktualizacím (sandboxovaná aplikace nesmí přepsat sama sebe) |
-| Distribuce | DMG podepsaný ad-hoc, Windows nepodepsaný; uživatel musí jednou povolit spuštění |
+| Distribuce | DMG podepsaný ad-hoc, Windows nepodepsaný; uživatel jednou povolí spuštění |
 
 ## Chybí (plánováno)
 
-Ochrana v reálném čase, karanténa, aktualizace pravidel, internetová ochrana,
-ochrana e-mailů a soukromí, System Care, podpis Developer ID + notarizace,
-podpis pro Windows, automatické aktualizace aplikace, produkční sada pravidel
-a produkční podpisový klíč, úplný seznam licencí v balíčku.
+Blokování spouštění programů (macOS Endpoint Security vyžaduje entitlement od
+Applu), internetová ochrana, ochrana e-mailů a soukromí, podpis Developer ID
+a notarizace, podpis pro Windows.
