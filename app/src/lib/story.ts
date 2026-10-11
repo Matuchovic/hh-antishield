@@ -54,10 +54,16 @@ export function fileName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
-function folderOf(path: string): string {
-  const shown = displayPath(path);
-  const cut = Math.max(shown.lastIndexOf("/"), shown.lastIndexOf("\\"));
-  return cut > 0 ? shown.slice(0, cut) : shown;
+/** Co ukázat jako cíl: u programu uvnitř aplikace celý balíček `.app`. */
+export function targetOf(path: string): { name: string; folder: string } {
+  const parts = displayPath(path).split(/[\\/]/).filter(Boolean);
+  const app = parts.findIndex((part) => part.endsWith(".app"));
+  const index = app >= 0 ? app : parts.length - 1;
+  return { name: parts[index] ?? path, folder: parts[index - 1] ?? "" };
+}
+
+function isMailStore(path: string): boolean {
+  return path.includes("/Library/Mail/") || path.includes("/Library/Containers/com.apple.mail/");
 }
 
 /** Krátká délka: „2 s“, „5 min“, „3 h 10 min“, „2 dny“. */
@@ -108,10 +114,15 @@ export function storySteps(story: Story): StoryStep[] {
 
   const where = [displayPath(finding.path)];
   if (finding.archiveEntry) where.push(`Uvnitř archivu: ${finding.archiveEntry}`);
+  const target = targetOf(finding.path);
   steps.push({
     id: "disk",
     icon: "folder",
-    title: `Uloženo ve složce ${fileName(folderOf(finding.path))}`,
+    title: isMailStore(finding.path)
+      ? "Uloženo v poště Apple Mail"
+      : target.folder
+        ? `Uloženo ve složce ${target.folder}`
+        : "Uloženo na disku",
     atMs: null,
     lines: where,
     tone: "neutral",
@@ -124,7 +135,7 @@ export function storySteps(story: Story): StoryStep[] {
     steps.push({
       id: "launch",
       icon: "play",
-      title: `Program ${process?.name ?? fileName(finding.path)} se spustil`,
+      title: `Program ${process?.name ?? targetOf(finding.path).name} se spustil`,
       atMs: process?.startedAtMs ?? null,
       lines,
       tone: "caution",
@@ -207,7 +218,7 @@ export function storySteps(story: Story): StoryStep[] {
 /** Jedna věta: odkud, kdy a jak to skončilo. */
 export function storySummary(story: Story): string {
   const { provenance: p, finding, outcome } = story;
-  const name = fileName(finding.path);
+  const name = targetOf(finding.path).name;
   const arrived = arrivedAt(story);
   const when = arrived !== null ? ` ${formatDateTime(arrived)}` : "";
   const page = hostOf(p.referrerUrl) ?? hostOf(p.downloadUrl);

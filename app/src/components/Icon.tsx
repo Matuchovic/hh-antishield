@@ -74,6 +74,20 @@ const PATHS = {
   trash: <path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13" />,
   restore: <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" />,
   warning: <path d="M12 4 2.5 20h19zm0 6v4m0 3v.5" />,
+  play: <path d="M8 5.5v13l10.5-6.5z" />,
+  close: <path d="M6 6l12 12M18 6L6 18" />,
+  power: (
+    <>
+      <path d="M12 3v8" />
+      <path d="M6.4 6.6a8 8 0 1 0 11.2 0" />
+    </>
+  ),
+  drive: (
+    <>
+      <rect x="3" y="7" width="18" height="10" rx="2" />
+      <path d="M7 12h.01M11 12h6" />
+    </>
+  ),
   sparkle: <path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6" />,
 } satisfies Record<string, ReactNode>;
 

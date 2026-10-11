@@ -35,12 +35,12 @@ export function angleOf(name: string): number {
 
 /** Pásmo radaru (podíl poloměru) podle druhu kontroly: venku stažené, uvnitř programy. */
 export const BANDS: Record<PulseKind, [number, number]> = {
-  download: [0.86, 0.95],
-  mail: [0.78, 0.86],
-  file: [0.74, 0.84],
-  scan: [0.6, 0.95],
-  program: [0.64, 0.72],
-  startup: [0.56, 0.62],
+  download: [0.83, 0.9],
+  mail: [0.72, 0.78],
+  file: [0.66, 0.74],
+  scan: [0.58, 0.9],
+  program: [0.58, 0.64],
+  startup: [0.54, 0.58],
 };
 
 /** Poloměr v pásmu: stabilní podle názvu. */

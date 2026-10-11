@@ -144,7 +144,7 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
           <br />
           {info ? platformName(info.platform) : ""}
         </p>
-        <Emblem layers={layers} scanning={scan.running} />
+        <Emblem layers={layers} scanning={scan.running} still={Boolean(app.settings?.reducedMotion)} />
         <h1 id="hero-title" className="hero-headline">
           {words.join(" ")} <em>{accent}</em>
         </h1>

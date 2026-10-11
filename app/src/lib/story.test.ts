@@ -91,6 +91,14 @@ describe("příběh útoku", () => {
     expect(storyAdvice(s)[0]).toMatch(/^Vyčistěte nález/);
   });
 
+  it("program v aplikaci pojmenuje celou aplikaci a složku, kde leží", () => {
+    const s = story({ finding: { ...story().finding, path: "/Users/eva/Downloads/invoice.pdf.app/Contents/MacOS/loader" } });
+    expect(storySummary(s)).toMatch(/^Soubor invoice\.pdf\.app přišel/);
+    expect(storySteps(s).find((x) => x.id === "disk")?.title).toBe("Uloženo ve složce Downloads");
+    const mail = story({ finding: { ...story().finding, path: "/Users/eva/Library/Mail/V10/x/Attachments/1/2/a.pdf" } });
+    expect(storySteps(mail).find((x) => x.id === "disk")?.title).toBe("Uloženo v poště Apple Mail");
+  });
+
   it("pomocné funkce", () => {
     expect(hostOf("https://a.example.com/x?y")).toBe("a.example.com");
     expect(hostOf(null)).toBeNull();
