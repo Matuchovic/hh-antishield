@@ -18,6 +18,7 @@ pub mod engine;
 pub mod error;
 pub mod matcher;
 mod platform;
+pub mod quarantine;
 pub mod rules;
 pub mod scan;
 pub mod selftest;
@@ -25,8 +26,9 @@ pub mod status;
 pub mod testvectors;
 pub mod types;
 
-pub use engine::{Engine, EngineConfig, RuleSource};
+pub use engine::{Engine, EngineConfig, RuleSource, RuleUpdateOutcome};
 pub use error::EngineError;
+pub use quarantine::QuarantineItem;
 pub use scan::{ScanHandle, ScanObserver};
 pub use types::*;
 

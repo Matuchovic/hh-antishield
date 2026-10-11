@@ -25,8 +25,8 @@ use crate::matcher::ContentMatcher;
 use crate::platform::{self, OpenError};
 use crate::rules::RulePack;
 use crate::types::{
-    Finding, ScanEvent, ScanLimits, ScanOutcome, ScanProgress, ScanRequest, ScanSummary, SkipCount,
-    SkipReason, SkippedItem,
+    Evidence, FileIdentity, Finding, ScanEvent, ScanLimits, ScanOutcome, ScanProgress, ScanRequest,
+    ScanSummary, Severity, SkipCount, SkipReason, SkippedItem,
 };
 use crate::{ENGINE_VERSION, now_ms};
 
@@ -150,6 +150,7 @@ pub(crate) fn spawn_scan(
                     files_scanned: 0,
                     bytes_scanned: 0,
                     archives_not_inspected: 0,
+                    yara_incomplete: 0,
                     findings: Vec::new(),
                     skipped_total: 0,
                     skipped_by_reason: Vec::new(),
@@ -187,6 +188,7 @@ enum Msg {
         item_id: u64,
         scanned: bool,
         archive: bool,
+        yara_incomplete: bool,
     },
     WalkerDone,
 }
@@ -261,6 +263,7 @@ struct Tally {
     skipped_sample: Vec<SkippedItem>,
     files_scanned: u64,
     archives: u64,
+    yara_incomplete: u64,
     done_items: u64,
 }
 
@@ -402,12 +405,14 @@ fn run_scan(
                 item_id,
                 scanned,
                 archive,
+                yara_incomplete,
             }) => {
                 // Pozdní výsledek položky, kterou už koordinátor odepsal jako zaseknutou.
                 if !abandoned.remove(&item_id) {
                     tally.done_items += 1;
                     tally.files_scanned += u64::from(scanned);
                     tally.archives += u64::from(archive);
+                    tally.yara_incomplete += u64::from(yara_incomplete);
                 }
             }
             Ok(Msg::WalkerDone) | Err(RecvTimeoutError::Disconnected) => walker_done = true,
@@ -529,6 +534,7 @@ fn run_scan(
         files_scanned: tally.files_scanned,
         bytes_scanned: shared.bytes.load(Ordering::Relaxed),
         archives_not_inspected: tally.archives,
+        yara_incomplete: tally.yara_incomplete,
         findings: tally.findings,
         skipped_total: tally.skipped_total,
         skipped_by_reason,
@@ -546,6 +552,7 @@ fn run_scan(
             "findings": summary.findings.len(),
             "skipped": summary.skipped_total,
             "archivesNotInspected": summary.archives_not_inspected,
+            "yaraIncomplete": summary.yara_incomplete,
             "durationMs": summary.finished_at_ms.saturating_sub(started_at_ms),
         }),
         true,
@@ -698,14 +705,26 @@ enum FileOutcome {
     Scanned {
         findings: Vec<Finding>,
         archive: bool,
+        yara_incomplete: bool,
     },
     Skipped(SkipReason),
     Cancelled,
 }
 
+fn new_yara_scanner(shared: &Shared) -> Option<yara_x::Scanner<'_>> {
+    shared.rules.yara().map(|rules| {
+        let mut scanner = yara_x::Scanner::new(rules);
+        scanner.set_timeout(Duration::from_millis(shared.limits.yara_timeout_ms));
+        scanner
+    })
+}
+
 fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slot: &Slot) {
     platform::prepare_scan_thread();
     let mut buffer = vec![0u8; CHUNK_SIZE];
+    // Jeden skener YARA na vlákno: jeho vytvoření není zadarmo.
+    let mut yara = new_yara_scanner(shared);
+    let mut content = Vec::new();
     loop {
         if slot.abandoned.load(Ordering::SeqCst) || shared.abort.load(Ordering::SeqCst) {
             return;
@@ -727,6 +746,7 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
                 item_id: item.id,
                 scanned: false,
                 archive: false,
+                yara_incomplete: false,
             });
             continue;
         }
@@ -737,8 +757,19 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
         slot.item.store(item.id, Ordering::SeqCst);
 
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            scan_file(shared, &item.path, &mut buffer, slot)
+            scan_file(
+                shared,
+                &item.path,
+                &mut buffer,
+                &mut content,
+                yara.as_mut(),
+                slot,
+            )
         }));
+        if outcome.is_err() {
+            // Po pádu nemusí být stav skeneru konzistentní.
+            yara = new_yara_scanner(shared);
+        }
 
         // Kdo položku první uvolní, ten ji vlastní. Pokud ji koordinátor mezitím
         // odepsal jako zaseknutou, vlákno skončí a výsledek zahodí.
@@ -752,21 +783,25 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
         }
 
         let display = item.path.display().to_string();
-        let (scanned, archive) = match outcome {
-            Ok(FileOutcome::Scanned { findings, archive }) => {
+        let (scanned, archive, yara_incomplete) = match outcome {
+            Ok(FileOutcome::Scanned {
+                findings,
+                archive,
+                yara_incomplete,
+            }) => {
                 for finding in findings {
                     let _ = tx.send(Msg::Finding(Box::new(finding)));
                 }
-                (true, archive)
+                (true, archive, yara_incomplete)
             }
             Ok(FileOutcome::Skipped(reason)) => {
                 let _ = tx.send(Msg::Skipped(SkippedItem {
                     path: display,
                     reason,
                 }));
-                (false, false)
+                (false, false, false)
             }
-            Ok(FileOutcome::Cancelled) => (false, false),
+            Ok(FileOutcome::Cancelled) => (false, false, false),
             Err(panic) => {
                 let message = panic
                     .downcast_ref::<&str>()
@@ -777,18 +812,29 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
                     path: display,
                     reason: SkipReason::InternalError { message },
                 }));
-                (false, false)
+                (false, false, false)
             }
         };
         let _ = tx.send(Msg::Done {
             item_id: item.id,
             scanned,
             archive,
+            yara_incomplete,
         });
     }
 }
 
-fn scan_file(shared: &Shared, path: &Path, buffer: &mut [u8], slot: &Slot) -> FileOutcome {
+/// Obsah větší než tato mez se po kontrole uvolní, aby vlákno nedrželo paměť.
+const KEEP_CONTENT_CAPACITY: usize = 8 * 1024 * 1024;
+
+fn scan_file(
+    shared: &Shared,
+    path: &Path,
+    buffer: &mut [u8],
+    content: &mut Vec<u8>,
+    yara: Option<&mut yara_x::Scanner<'_>>,
+    slot: &Slot,
+) -> FileOutcome {
     let limits = &shared.limits;
     let (mut file, meta) = match platform::open_regular(path) {
         Ok(opened) => opened,
@@ -803,6 +849,9 @@ fn scan_file(shared: &Shared, path: &Path, buffer: &mut [u8], slot: &Slot) -> Fi
         });
     }
 
+    // YARA potřebuje celý obsah; soubory do limitu se drží v paměti.
+    let mut collect = yara.is_some() && before.size <= limits.max_yara_file_bytes;
+    content.clear();
     let mut matcher = ContentMatcher::new(&shared.rules);
     loop {
         if shared.stopped() {
@@ -815,6 +864,13 @@ fn scan_file(shared: &Shared, path: &Path, buffer: &mut [u8], slot: &Slot) -> Fi
             Err(err) => return FileOutcome::Skipped(platform::classify_io_error(&err)),
         };
         matcher.feed(&buffer[..read]);
+        if collect {
+            if (content.len() + read) as u64 <= limits.max_yara_file_bytes {
+                content.extend_from_slice(&buffer[..read]);
+            } else {
+                collect = false;
+            }
+        }
         shared.bytes.fetch_add(read as u64, Ordering::Relaxed);
         slot.last_progress_ms
             .store(shared.now_ms(), Ordering::SeqCst);
@@ -832,7 +888,7 @@ fn scan_file(shared: &Shared, path: &Path, buffer: &mut [u8], slot: &Slot) -> Fi
     let verdict = matcher.finish();
     let sha256 = hex::encode(verdict.sha256);
     let display = path.display().to_string();
-    let findings = verdict
+    let mut findings: Vec<Finding> = verdict
         .matches
         .iter()
         .map(|m| {
@@ -852,8 +908,107 @@ fn scan_file(shared: &Shared, path: &Path, buffer: &mut [u8], slot: &Slot) -> Fi
             }
         })
         .collect();
+
+    let mut yara_incomplete = false;
+    if let Some(scanner) = yara {
+        if shared.stopped() {
+            return FileOutcome::Cancelled;
+        }
+        if collect && content.len() as u64 == verdict.size {
+            slot.last_progress_ms
+                .store(shared.now_ms(), Ordering::SeqCst);
+            match scanner.scan(content) {
+                Ok(results) => {
+                    for rule in results.matching_rules() {
+                        findings.push(yara_finding(
+                            &shared.rules,
+                            &rule,
+                            &display,
+                            &sha256,
+                            before,
+                            changed,
+                        ));
+                    }
+                }
+                // Vypršený čas nebo chyba: soubor prošel jen otisky a vzory.
+                Err(_) => yara_incomplete = true,
+            }
+        } else {
+            yara_incomplete = true;
+        }
+    }
+    if content.capacity() > KEEP_CONTENT_CAPACITY {
+        *content = Vec::new();
+    }
     FileOutcome::Scanned {
         findings,
         archive: verdict.archive.is_some(),
+        yara_incomplete,
+    }
+}
+
+const MAX_META_LEN: usize = 300;
+
+fn meta_text(value: &str) -> String {
+    value.chars().take(MAX_META_LEN).collect()
+}
+
+/// Nález z pravidla YARA. Závažnost vychází z metadat `score` (0–100);
+/// pravidla s `hh_test_only = true` jsou jen testovací.
+fn yara_finding(
+    pack: &RulePack,
+    rule: &yara_x::Rule<'_, '_>,
+    path: &str,
+    sha256: &str,
+    identity: FileIdentity,
+    changed: bool,
+) -> Finding {
+    use yara_x::MetaValue;
+    let mut description = None;
+    let mut author = None;
+    let mut reference = None;
+    let mut score = None;
+    let mut test_marker = false;
+    for (key, value) in rule.metadata() {
+        match (key, value) {
+            ("description", MetaValue::String(text)) => description = Some(meta_text(text)),
+            ("author", MetaValue::String(text)) => author = Some(meta_text(text)),
+            ("reference", MetaValue::String(text)) => reference = Some(meta_text(text)),
+            ("score", MetaValue::Integer(value)) => score = Some(value),
+            ("hh_test_only", MetaValue::Bool(true)) => test_marker = true,
+            _ => {}
+        }
+    }
+    let test_only = test_marker || pack.info().test_pack;
+    let severity = if test_only {
+        Severity::TestOnly
+    } else {
+        match score {
+            Some(s) if s >= 80 => Severity::High,
+            Some(s) if s >= 60 => Severity::Medium,
+            Some(_) => Severity::Low,
+            None => Severity::Medium,
+        }
+    };
+    let namespace = rule.namespace().to_string();
+    let identifier = rule.identifier().to_string();
+    Finding {
+        path: path.to_string(),
+        sha256: sha256.to_string(),
+        rule_id: format!("YARA:{namespace}:{identifier}"),
+        rule_name: identifier.clone(),
+        rule_version: 1,
+        rule_description: description
+            .unwrap_or_else(|| "Soubor odpovídá pravidlu YARA.".to_string()),
+        severity,
+        test_only,
+        evidence: vec![Evidence::YaraMatch {
+            source: namespace,
+            rule: identifier,
+            author,
+            reference,
+        }],
+        identity,
+        changed_during_read: changed,
     }
 }

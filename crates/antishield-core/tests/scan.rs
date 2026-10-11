@@ -7,8 +7,12 @@ use std::fs;
 use std::time::{Duration, Instant};
 
 use antishield_core::testvectors::{eicar, synthetic_sample};
-use antishield_core::{EngineError, ScanEvent, ScanOutcome, ScanRequest};
+use antishield_core::{
+    Engine, EngineConfig, EngineError, Evidence, RuleSource, ScanEvent, ScanOutcome, ScanRequest,
+    Severity,
+};
 use common::{engine, finding_rules, marker, scan, skipped_reasons, write};
+use serde_json::json;
 
 fn request(root: &std::path::Path) -> ScanRequest {
     ScanRequest::new(vec![root.to_path_buf()])
@@ -377,4 +381,96 @@ fn next_scan_starts_right_after_finished() {
         let (_, summary) = common::collect(&rx);
         assert_eq!(summary.outcome, ScanOutcome::Completed);
     }
+}
+
+const DEMO_YARA: &str = r#"
+rule Demo_Rule {
+    meta:
+        description = "Demo detection"
+        author = "Tester"
+        score = 85
+    strings:
+        $a = "HARMLESS-YARA-DEMO"
+    condition:
+        $a
+}
+rule Demo_Test {
+    meta:
+        hh_test_only = true
+    strings:
+        $a = "HH-ANTISHIELD-YARA-SELFTEST-0001"
+    condition:
+        $a
+}
+"#;
+
+fn production_engine(state: &std::path::Path, pack: &serde_json::Value) -> Engine {
+    let (pack, signature) = common::signed(pack);
+    let mut config = EngineConfig::new(state);
+    config.rules = RuleSource::Bytes { pack, signature };
+    config.trusted_keys = Some(common::trusted(false));
+    Engine::new(config).unwrap()
+}
+
+#[test]
+fn yara_rules_detect_content_and_explain_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("data");
+    write(&root.join("hit.bin"), b"....HARMLESS-YARA-DEMO....");
+    write(
+        &root.join("selftest.txt"),
+        b"xx HH-ANTISHIELD-YARA-SELFTEST-0001 xx",
+    );
+    write(&root.join("clean.bin"), b"nothing to see");
+    let mut pack = common::yara_pack(json!([common::yara_source("demo", DEMO_YARA)]));
+    pack["test_pack"] = false.into();
+    let engine = production_engine(&tmp.path().join("state"), &pack);
+    let (_, summary) = scan(&engine, request(&root));
+
+    let hit = summary
+        .findings
+        .iter()
+        .find(|f| f.path.ends_with("hit.bin"))
+        .unwrap();
+    assert_eq!(hit.rule_id, "YARA:demo:Demo_Rule");
+    assert_eq!(hit.rule_description, "Demo detection");
+    assert_eq!(hit.severity, Severity::High);
+    assert!(!hit.test_only);
+    assert!(matches!(
+        &hit.evidence[0],
+        Evidence::YaraMatch { source, rule, author: Some(author), .. }
+            if source == "demo" && rule == "Demo_Rule" && author == "Tester"
+    ));
+    let test = summary
+        .findings
+        .iter()
+        .find(|f| f.path.ends_with("selftest.txt"))
+        .unwrap();
+    assert!(test.test_only);
+    assert_eq!(test.severity, Severity::TestOnly);
+    assert!(
+        summary
+            .findings
+            .iter()
+            .all(|f| !f.path.ends_with("clean.bin"))
+    );
+    assert_eq!(summary.yara_incomplete, 0);
+    assert_eq!(summary.rule_pack.yara_rule_count, 2);
+}
+
+#[test]
+fn files_over_the_yara_limit_are_counted_not_hidden() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("data");
+    let mut big = b"HARMLESS-YARA-DEMO".to_vec();
+    big.resize(2 * 1024 * 1024, b'x');
+    write(&root.join("big.bin"), &big);
+    let pack = common::yara_pack(json!([common::yara_source("demo", DEMO_YARA)]));
+    let engine = common::engine_with_pack(&tmp.path().join("state"), &pack);
+    let mut req = request(&root);
+    req.limits.max_yara_file_bytes = 1024 * 1024;
+    let (_, summary) = scan(&engine, req);
+    assert_eq!(summary.files_scanned, 1);
+    assert!(summary.findings.is_empty());
+    assert_eq!(summary.yara_incomplete, 1);
 }

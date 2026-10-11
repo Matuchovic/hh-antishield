@@ -1,21 +1,24 @@
 //! Engine: spojuje pravidla, skener, audit a stav pro aplikaci a CLI.
 
-use std::fs::File;
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
+
+use serde::Serialize;
 
 use serde_json::json;
 
 use crate::audit::AuditLog;
 use crate::error::EngineError;
+use crate::quarantine::{Quarantine, QuarantineItem};
 use crate::rules::{self, MAX_PACK_SIZE, MAX_SIGNATURE_FILE_SIZE, RulePack, TrustedKey};
 use crate::scan::{self, ScanContext, ScanHandle, ScanObserver};
 use crate::status::{
     ComponentKind, ComponentState, ComponentStatus, ProtectionSummary, summarize_protection,
 };
-use crate::types::{AuditEvent, EngineInfo, ScanRequest, SelfTestReport};
+use crate::types::{AuditEvent, EngineInfo, Finding, RulePackInfo, ScanRequest, SelfTestReport};
 use crate::{ENGINE_VERSION, now_ms, platform_label, selftest};
 
 /// Testovací sada pravidel zabudovaná do enginu (podepsaná, ověřuje se při načtení).
@@ -25,6 +28,8 @@ const EMBEDDED_SIGNATURE: &[u8] = include_bytes!("../../../rules/test-pack.json.
 /// Odkud načíst sadu pravidel.
 #[derive(Debug, Clone)]
 pub enum RuleSource {
+    /// Nainstalovaná aktualizace z `data_dir/rules`, jinak zabudovaná sada.
+    InstalledOrEmbedded,
     /// Testovací sada zabudovaná do binárky.
     Embedded,
     Files {
@@ -50,20 +55,93 @@ impl EngineConfig {
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
-            rules: RuleSource::Embedded,
+            rules: RuleSource::InstalledOrEmbedded,
             trusted_keys: None,
         }
     }
 }
 
+/// Aktivní sada pravidel; při aktualizaci se vymění celá najednou.
+#[derive(Debug, Clone)]
+struct ActiveRules {
+    pack: Arc<RulePack>,
+    signature: Vec<u8>,
+    loaded_at_ms: u64,
+}
+
+/// Výsledek instalace aktualizace pravidel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RuleUpdateOutcome {
+    Installed { rule_pack: RulePackInfo },
+    UpToDate { rule_pack: RulePackInfo },
+}
+
 #[derive(Debug)]
 pub struct Engine {
-    rules: Arc<RulePack>,
+    rules: RwLock<ActiveRules>,
+    keys: Vec<TrustedKey>,
+    rules_dir: PathBuf,
+    quarantine: Quarantine,
     audit: Arc<Mutex<AuditLog>>,
     audit_healthy: Arc<AtomicBool>,
     running: Arc<AtomicBool>,
     loaded_at_ms: u64,
     last_self_test: Mutex<Option<SelfTestReport>>,
+}
+
+fn now_unix() -> i64 {
+    i64::try_from(now_ms() / 1000).unwrap_or(i64::MAX)
+}
+
+/// Název adresáře nainstalované sady: `seq-<číslo>`.
+fn installed_dir_name(sequence: u64) -> String {
+    format!("seq-{sequence}")
+}
+
+fn valid_installed_dir(name: &str) -> bool {
+    name.strip_prefix("seq-")
+        .is_some_and(|n| !n.is_empty() && n.len() <= 20 && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Zapíše soubor atomicky: dočasný soubor, fsync, přejmenování.
+fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension("tmp");
+    let _ = fs::remove_file(&temp);
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp)?;
+    file.write_all(data)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&temp, path)
+}
+
+/// Načte nainstalovanou sadu, pokud existuje: (sada, podpis) jako bajty.
+fn read_installed(rules_dir: &Path) -> Option<Result<(Vec<u8>, Vec<u8>), EngineError>> {
+    let current = fs::read_to_string(rules_dir.join("current")).ok()?;
+    let name = current.trim();
+    if !valid_installed_dir(name) {
+        return Some(Err(EngineError::RulePackMalformed(
+            "installed rule pack pointer is invalid".into(),
+        )));
+    }
+    let dir = rules_dir.join(name);
+    Some((|| {
+        Ok((
+            read_bounded(&dir.join("pack.json"), MAX_PACK_SIZE)?,
+            read_bounded(&dir.join("pack.json.sig"), MAX_SIGNATURE_FILE_SIZE)?,
+        ))
+    })())
 }
 
 fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>, EngineError> {
@@ -94,33 +172,74 @@ impl Engine {
             audit.append("audit_integrity_issue", json!({ "detail": issue }), true)?;
         }
 
+        let keys = config
+            .trusted_keys
+            .unwrap_or_else(rules::builtin_trusted_keys);
+        let rules_dir = config.data_dir.join("rules");
+        let now_unix = now_unix();
+
+        // Nainstalovaná aktualizace má přednost; když neprojde, použije se zabudovaná sada.
+        let mut installed = None;
+        if matches!(config.rules, RuleSource::InstalledOrEmbedded)
+            && let Some(read) = read_installed(&rules_dir)
+        {
+            let loaded = read.and_then(|(pack, signature)| {
+                let rules = RulePack::load(&pack, &signature, &keys, now_unix)?;
+                if rules.info().test_pack {
+                    return Err(EngineError::InvalidRequest(
+                        "an installed rule pack must not be a test pack".into(),
+                    ));
+                }
+                Ok((rules, signature))
+            });
+            match loaded {
+                Ok(found) => installed = Some(found),
+                Err(err) => {
+                    let _ = audit.append(
+                        "rule_pack_rejected",
+                        json!({ "source": "installed", "code": err.code(), "message": err.to_string() }),
+                        true,
+                    );
+                }
+            }
+        }
+
         let (pack, signature) = match config.rules {
-            RuleSource::Embedded => (EMBEDDED_PACK.to_vec(), EMBEDDED_SIGNATURE.to_vec()),
+            RuleSource::InstalledOrEmbedded | RuleSource::Embedded => {
+                (EMBEDDED_PACK.to_vec(), EMBEDDED_SIGNATURE.to_vec())
+            }
             RuleSource::Files { pack, signature } => (
                 read_bounded(&pack, MAX_PACK_SIZE)?,
                 read_bounded(&signature, MAX_SIGNATURE_FILE_SIZE)?,
             ),
             RuleSource::Bytes { pack, signature } => (pack, signature),
         };
-        let keys = config
-            .trusted_keys
-            .unwrap_or_else(rules::builtin_trusted_keys);
-        let now_unix = i64::try_from(now_ms() / 1000).unwrap_or(i64::MAX);
-        let rules = match RulePack::load(&pack, &signature, &keys, now_unix) {
-            Ok(rules) => rules,
-            Err(err) => {
-                let _ = audit.append(
-                    "rule_pack_rejected",
-                    json!({ "code": err.code(), "message": err.to_string() }),
-                    true,
-                );
-                return Err(err);
-            }
+        let (rules, signature) = match installed {
+            Some(found) => found,
+            None => match RulePack::load(&pack, &signature, &keys, now_unix) {
+                Ok(rules) => (rules, signature),
+                Err(err) => {
+                    let _ = audit.append(
+                        "rule_pack_rejected",
+                        json!({ "code": err.code(), "message": err.to_string() }),
+                        true,
+                    );
+                    return Err(err);
+                }
+            },
         };
         audit.append("rule_pack_loaded", json!(rules.info()), true)?;
+        let quarantine = Quarantine::open(&config.data_dir.join("quarantine"))?;
 
         Ok(Self {
-            rules: Arc::new(rules),
+            rules: RwLock::new(ActiveRules {
+                pack: Arc::new(rules),
+                signature,
+                loaded_at_ms: now_ms(),
+            }),
+            keys,
+            rules_dir,
+            quarantine,
             audit: Arc::new(Mutex::new(audit)),
             audit_healthy: Arc::new(AtomicBool::new(true)),
             running: Arc::new(AtomicBool::new(false)),
@@ -133,12 +252,173 @@ impl Engine {
         EngineInfo {
             engine_version: ENGINE_VERSION.to_string(),
             platform: platform_label(),
-            rule_pack: self.rules.info().clone(),
+            rule_pack: self.rules().info().clone(),
         }
     }
 
-    pub fn rules(&self) -> &RulePack {
-        &self.rules
+    fn active(&self) -> ActiveRules {
+        match self.rules.read() {
+            Ok(active) => active.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
+
+    /// Aktuální sada pravidel. Běžící kontrola si drží tu, se kterou začala.
+    pub fn rules(&self) -> Arc<RulePack> {
+        self.active().pack
+    }
+
+    /// Podpis aktivní sady; aplikace podle něj pozná, že aktualizace není nová.
+    pub fn rules_signature(&self) -> Vec<u8> {
+        self.active().signature
+    }
+
+    /// Ověří a nainstaluje aktualizaci pravidel. Přijme jen produkční sadu
+    /// s platným podpisem, novější než aktivní, která projde self-testem.
+    /// Uloží ji atomicky a vymění za běhu; probíhající kontrolu neovlivní.
+    pub fn install_rule_pack(
+        &self,
+        pack: &[u8],
+        signature: &[u8],
+    ) -> Result<RuleUpdateOutcome, EngineError> {
+        let result = self.install_rule_pack_inner(pack, signature);
+        match &result {
+            Ok(RuleUpdateOutcome::Installed { rule_pack }) => {
+                self.audit("rule_pack_installed", json!(rule_pack), true);
+            }
+            Ok(RuleUpdateOutcome::UpToDate { .. }) => {}
+            Err(err) => self.audit(
+                "rule_pack_rejected",
+                json!({ "source": "update", "code": err.code(), "message": err.to_string() }),
+                true,
+            ),
+        }
+        result
+    }
+
+    fn install_rule_pack_inner(
+        &self,
+        pack: &[u8],
+        signature: &[u8],
+    ) -> Result<RuleUpdateOutcome, EngineError> {
+        let loaded = RulePack::load(pack, signature, &self.keys, now_unix())?;
+        let info = loaded.info().clone();
+        if info.test_pack {
+            return Err(EngineError::InvalidRequest(
+                "a test rule pack cannot be installed as an update".into(),
+            ));
+        }
+        let current = self.rules();
+        if !current.info().test_pack {
+            let installed = current.info().sequence;
+            if info.sequence < installed {
+                return Err(EngineError::RulePackRollback {
+                    current: installed,
+                    offered: info.sequence,
+                });
+            }
+            if info.sequence == installed {
+                return Ok(RuleUpdateOutcome::UpToDate {
+                    rule_pack: current.info().clone(),
+                });
+            }
+        }
+        let report = selftest::run(&loaded);
+        if !report.passed {
+            let failed: Vec<String> = report
+                .checks
+                .iter()
+                .filter(|c| !c.passed)
+                .map(|c| c.name.clone())
+                .collect();
+            return Err(EngineError::RulePackSelfTest(failed.join(", ")));
+        }
+
+        let name = installed_dir_name(info.sequence);
+        let dir = self.rules_dir.join(&name);
+        fs::create_dir_all(&dir)?;
+        write_atomic(&dir.join("pack.json"), pack)?;
+        write_atomic(&dir.join("pack.json.sig"), signature)?;
+        write_atomic(&self.rules_dir.join("current"), name.as_bytes())?;
+        self.prune_installed(&name);
+
+        let replacement = ActiveRules {
+            pack: Arc::new(loaded),
+            signature: signature.to_vec(),
+            loaded_at_ms: now_ms(),
+        };
+        match self.rules.write() {
+            Ok(mut active) => *active = replacement,
+            Err(poisoned) => *poisoned.into_inner() = replacement,
+        }
+        if let Ok(mut last) = self.last_self_test.lock() {
+            *last = Some(report);
+        }
+        Ok(RuleUpdateOutcome::Installed { rule_pack: info })
+    }
+
+    /// Ponechá aktivní a jednu předchozí sadu, starší smaže.
+    fn prune_installed(&self, keep: &str) {
+        let Ok(entries) = fs::read_dir(&self.rules_dir) else {
+            return;
+        };
+        let mut others: Vec<(u64, PathBuf)> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == keep || !valid_installed_dir(&name) {
+                    return None;
+                }
+                let sequence = name.strip_prefix("seq-")?.parse().ok()?;
+                Some((sequence, entry.path()))
+            })
+            .collect();
+        others.sort_by(|a, b| b.0.cmp(&a.0));
+        for (_, path) in others.into_iter().skip(1) {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+
+    /// Přesune soubor z nálezu do karantény (jen pokud se od kontroly nezměnil).
+    pub fn quarantine_finding(&self, finding: &Finding) -> Result<QuarantineItem, EngineError> {
+        let result = self.quarantine.add(finding);
+        match &result {
+            Ok(item) => self.audit(
+                "quarantined",
+                json!({ "id": item.id, "path": item.original_path, "sha256": item.sha256, "ruleId": item.rule_id }),
+                true,
+            ),
+            Err(err) => self.audit(
+                "quarantine_failed",
+                json!({ "path": finding.path, "code": err.code(), "message": err.to_string() }),
+                true,
+            ),
+        }
+        result
+    }
+
+    pub fn quarantine_items(&self) -> Result<Vec<QuarantineItem>, EngineError> {
+        self.quarantine.list()
+    }
+
+    pub fn restore_quarantined(&self, id: &str) -> Result<QuarantineItem, EngineError> {
+        let item = self.quarantine.restore(id)?;
+        self.audit(
+            "quarantine_restored",
+            json!({ "id": item.id, "path": item.original_path }),
+            true,
+        );
+        Ok(item)
+    }
+
+    pub fn delete_quarantined(&self, id: &str) -> Result<QuarantineItem, EngineError> {
+        let item = self.quarantine.delete(id)?;
+        self.audit(
+            "quarantine_deleted",
+            json!({ "id": item.id, "path": item.original_path }),
+            true,
+        );
+        Ok(item)
     }
 
     fn audit(&self, kind: &str, data: serde_json::Value, sync: bool) {
@@ -153,7 +433,7 @@ impl Engine {
 
     /// Spustí self-test, uloží výsledek pro stav komponent a zapíše ho do auditu.
     pub fn self_test(&self) -> SelfTestReport {
-        let report = selftest::run(&self.rules);
+        let report = selftest::run(&self.rules());
         self.audit("self_test", json!(report), true);
         if let Ok(mut last) = self.last_self_test.lock() {
             *last = Some(report.clone());
@@ -169,7 +449,7 @@ impl Engine {
     ) -> Result<ScanHandle, EngineError> {
         scan::spawn_scan(
             ScanContext {
-                rules: self.rules.clone(),
+                rules: self.rules(),
                 audit: self.audit.clone(),
                 audit_healthy: self.audit_healthy.clone(),
                 running: self.running.clone(),
@@ -215,14 +495,24 @@ impl Engine {
                 reason: "self-test has not run yet".into(),
             },
         };
-        let info = self.rules.info();
+        let active = self.active();
+        let info = active.pack.info();
         let rules_state = if info.expired {
             ComponentState::Degraded {
                 reason: "rule pack has expired".into(),
             }
         } else {
             ComponentState::Running {
-                verified_at_ms: self.loaded_at_ms,
+                verified_at_ms: active.loaded_at_ms,
+            }
+        };
+        let quarantine_state = if self.quarantine.is_healthy() {
+            ComponentState::Running {
+                verified_at_ms: now_ms(),
+            }
+        } else {
+            ComponentState::Failed {
+                reason: "quarantine storage is not writable".into(),
             }
         };
         let integrity = self
@@ -250,6 +540,7 @@ impl Engine {
                     ComponentKind::DetectionEngine => engine_state.clone(),
                     ComponentKind::RulePack => rules_state.clone(),
                     ComponentKind::AuditLog => audit_state.clone(),
+                    ComponentKind::Quarantine => quarantine_state.clone(),
                     ComponentKind::OnDemandScan => ComponentState::Running {
                         verified_at_ms: self.loaded_at_ms,
                     },

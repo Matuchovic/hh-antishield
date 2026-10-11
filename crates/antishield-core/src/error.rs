@@ -15,6 +15,16 @@ pub enum EngineError {
     RulePackMalformed(String),
     #[error("rule pack requires engine {required}, this engine is {current}")]
     RulePackIncompatible { required: String, current: String },
+    #[error("rule pack sequence {offered} is older than the installed {current}")]
+    RulePackRollback { current: u64, offered: u64 },
+    #[error("rule pack failed the self-test: {0}")]
+    RulePackSelfTest(String),
+    #[error("the file changed since the scan: {0}")]
+    FileChanged(String),
+    #[error("quarantine item not found: {0}")]
+    QuarantineItemNotFound(String),
+    #[error("a file already exists at {0}")]
+    RestoreConflict(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("a scan is already running")]
@@ -34,6 +44,11 @@ impl EngineError {
             Self::RulePackUnknownKey { .. } => "rule_pack_unknown_key",
             Self::RulePackMalformed(_) => "rule_pack_malformed",
             Self::RulePackIncompatible { .. } => "rule_pack_incompatible",
+            Self::RulePackRollback { .. } => "rule_pack_rollback",
+            Self::RulePackSelfTest(_) => "rule_pack_self_test",
+            Self::FileChanged(_) => "file_changed",
+            Self::QuarantineItemNotFound(_) => "quarantine_item_not_found",
+            Self::RestoreConflict(_) => "restore_conflict",
             Self::InvalidRequest(_) => "invalid_request",
             Self::ScanAlreadyRunning => "scan_already_running",
             Self::Audit(_) => "audit",

@@ -27,8 +27,62 @@ fn embedded_pack_verifies_with_builtin_key() {
     let sig = include_bytes!("../../../rules/test-pack.json.sig");
     let loaded = RulePack::load(pack, sig, &builtin_trusted_keys(), NOW).unwrap();
     assert!(loaded.info().test_pack);
-    assert_eq!(loaded.info().rule_count, 5);
+    assert_eq!(loaded.info().rule_count, 6);
+    assert_eq!(loaded.info().yara_rule_count, 1);
+    assert_eq!(loaded.info().sources.len(), 1);
     assert!(loaded.eicar_rule().is_some());
+    assert!(loaded.yara().is_some());
+}
+
+const YARA_OK: &str =
+    r#"rule Demo_Rule { meta: score = 85 strings: $a = "HARMLESS-YARA-DEMO" condition: $a }"#;
+
+#[test]
+fn yara_sources_compile_and_count() {
+    let pack = common::yara_pack(json!([
+        common::yara_source("alpha", YARA_OK),
+        common::yara_source(
+            "beta",
+            "rule B1 { condition: false } rule B2 { condition: false }"
+        ),
+    ]));
+    let (bytes, sig) = common::signed(&pack);
+    let loaded = RulePack::load(&bytes, &sig, &common::trusted(true), NOW).unwrap();
+    let info = loaded.info();
+    assert_eq!(info.yara_rule_count, 3);
+    assert_eq!(info.rule_count, 4);
+    let counts: Vec<(String, u32)> = info
+        .sources
+        .iter()
+        .map(|s| (s.id.clone(), s.rule_count))
+        .collect();
+    assert_eq!(counts, [("alpha".to_string(), 1), ("beta".to_string(), 2)]);
+}
+
+#[test]
+fn invalid_yara_sources_are_rejected() {
+    let bad_sources = [
+        json!([common::yara_source(
+            "alpha",
+            "rule Broken { condition: $missing }"
+        )]),
+        json!([common::yara_source("Alpha", YARA_OK)]),
+        json!([common::yara_source("1alpha", YARA_OK)]),
+        json!([
+            common::yara_source("alpha", YARA_OK),
+            common::yara_source("alpha", YARA_OK)
+        ]),
+        json!([{ "id": "alpha", "name": "x", "url": "http://insecure.example", "license": "MIT", "source": YARA_OK }]),
+        json!([{ "id": "alpha", "name": "x", "url": "https://example.com", "license": "", "source": YARA_OK }]),
+    ];
+    for sources in bad_sources {
+        let (bytes, sig) = common::signed(&common::yara_pack(sources.clone()));
+        let result = RulePack::load(&bytes, &sig, &common::trusted(true), NOW);
+        assert!(
+            matches!(result, Err(EngineError::RulePackMalformed(_))),
+            "{sources}: {result:?}"
+        );
+    }
 }
 
 #[test]
