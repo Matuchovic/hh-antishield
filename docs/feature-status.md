@@ -1,4 +1,4 @@
-# Stav funkcí – v0.2
+# Stav funkcí – v0.3
 
 Platí pravidlo: aplikace nikdy netvrdí ochranu, kterou nemá. V0.2 hlásí
 „Váš Mac je hlídaný“, jen když skutečně běží hlídání složek i ověřené
@@ -18,6 +18,11 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 | Vyčištění souboru jedním kliknutím (do karantény) | `engine.rs`, rozhraní |
 | Hlídání složek v reálném čase: nové a změněné soubory, částečná stahování se ignorují | test hlídání v CI (Linux, macOS, Windows) |
 | Odepřený přístup ke složce (macOS Soubory a složky) se hlásí jako omezené hlídání s radou, jak ho povolit | unit test `state.rs` |
+| Kontrola po spuštění: soubory, které v hlídaných složkách přibyly, když AntiShield neběžel | unit testy `watch.rs`, `services.rs` |
+| Hlídání spuštěných programů: nový program (mimo systémové) se zkontroluje do ~3 s; jistě škodlivý (vysoká závažnost) se ukončí a izoluje, méně jistý se nahlásí | unit testy `system.rs` (nový proces se nahlásí jednou), `services.rs` (pravidla zásahu) |
+| Hlídání položek po přihlášení (LaunchAgents/LaunchDaemons, Windows Startup): nová položka se zkontroluje i s programem, který spouští | `system.rs`, `services.rs`; na Macu ověří uživatel |
+| Bezpečnost systému: tlačítko otevře příslušný panel Nastavení systému / Zabezpečení Windows (pevné adresy, nic nemění) | překlad v CI; na zařízení ověří uživatel |
+| Ochrana na pozadí (macOS): LaunchAgent spustí AntiShield po přihlášení a obnoví ho po ukončení; ⌘Q a zavření okna ji nevypnou, vypnout jde jen z lišty | unit testy `agent.rs`; launchd ověří uživatel na Macu |
 | Plánovaná kontrola denně / týdně, zmeškaná doběhne po spuštění | unit testy `services.rs` |
 | Nastavení (ochrana, karanténa, oznámení, plán, aktualizace, spouštění, zvuk a animace) | unit test `settings.rs`, rozhraní |
 | Auditní log s řetězením SHA-256, pravdivý souhrn stavu, self-test | `audit.rs`, `status.rs`, `format.test.ts` |
@@ -38,6 +43,8 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 
 ## Chybí (plánováno)
 
-Blokování spouštění programů (macOS Endpoint Security vyžaduje entitlement od
-Applu), internetová ochrana, ochrana e-mailů a soukromí, podpis Developer ID
-a notarizace, podpis pro Windows.
+Blokování spouštění programů předem (macOS Endpoint Security vyžaduje
+entitlement od Applu a Developer ID; dnes se škodlivý program ukončí až po
+spuštění), internetová ochrana, ochrana e-mailů a soukromí, kontrola obsahu
+DMG/PKG, podpis Developer ID a notarizace, podpis pro Windows, ochrana na
+pozadí s obnovou po ukončení i na Windows.

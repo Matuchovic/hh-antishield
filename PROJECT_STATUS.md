@@ -1,6 +1,6 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.2.1)
+Aktualizováno: 2026-10-11 (v0.3.0)
 
 ## Stav
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
@@ -9,6 +9,13 @@ Aktualizováno: 2026-10-11 (v0.2.1)
   enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
   Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
   0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.3.0: hlídání spuštěných programů (každé 3 s; jistý nález = ukončit
+  a izolovat, méně jistý = nahlásit), hlídání položek po přihlášení i s jejich
+  programem, tlačítka do Nastavení systému u vypnutých ochran.
+- v0.2.2 (součást 0.3.0): ochrana běží na pozadí i po zavření/ukončení aplikace (macOS
+  LaunchAgent s KeepAlive, vypnutí jen z lišty s potvrzením, ochrana proti
+  smyčce pádů) a po spuštění dožene kontrolu souborů, které přibyly, když
+  neběžela.
 - v0.2: YARA-X a produkční pravidla
   z YARA Forge, ZIP, hlídání složek v reálném čase, karanténa a vyčištění
   (proces, položka po přihlášení), rychlá/úplná/plánovaná kontrola, bezpečnost
@@ -30,17 +37,24 @@ Aktualizováno: 2026-10-11 (v0.2.1)
 - Tauri, jedna aplikace pro macOS a Windows; distribuce mimo App Store.
 - Samostatný projekt: žádný vliv na hhsecurity a hhcloud.
 - Aktualizace aplikace přes banner (GitHub Releases), App Sandbox vypnutý.
+- Ochrana na pozadí na macOS: vlastní LaunchAgent `cz.hh.antishield.agent`
+  (RunAtLoad, KeepAlive, ThrottleInterval 10 s) místo pluginu autostart;
+  jen pro aplikaci nainstalovanou v Aplikacích. Na Windows dál plugin
+  (spuštění po přihlášení, bez obnovy po ukončení).
 - Tvrzené prostředí (hardened runtime) zapnuté s jedinou výjimkou
   `com.apple.security.cs.allow-unsigned-executable-memory` pro JIT ve
   wasmtime (YARA-X); Release spouští self-test z podepsaného balíčku.
 - Pravidla: YARA Forge core, jen licence MIT/Apache/BSD/DRL/CC0/CC-BY/
   Unlicense; podpis klíčem `hh-rules-2026-10` (secret `RULES_SIGNING_KEY`),
   vydání `rules` (prerelease, ne „latest“).
+- Otisky z MalwareBazaar (abuse.ch) nepoužity: export vyžaduje Auth-Key
+  a komerční použití jen s placeným předplatným Spamhaus (podmínky abuse.ch,
+  oddíl 4 a 7.3). Detekce dál z YARA Forge core (licence pro komerční použití).
 - Animace jen transform/opacity, bez filtru blur a bez `will-change` na
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
 ## Testy (2026-10-11, lokálně)
-- Rust: 74 testů (jádro 65, CLI 4, aplikace 5), clippy `-D warnings`,
+- Rust: 82 testů (jádro 68, CLI 4, aplikace 10), clippy `-D warnings`,
   rustfmt; self-test aplikace `--self-test` prošel.
 - Produkční řetězec pravidel lokálně: build → podpis produkčním klíčem →
   verify → self-test → nález pravidlem z Forge. Odhalil chybu: `rules sign`
@@ -70,6 +84,6 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Zelené CI v PR → sloučit → secret `RULES_SIGNING_KEY` → Rules (publish) →
-Release 0.2.0 (publish) → ověřit na Macu aktualizaci přes banner, hlídání
-Stažených souborů (EICAR) a vyčištění.
+Sloučit PR s 0.3.0 → Release (publish) → na Macu ověřit: ochrana běží po ⌘Q
+i po odhlášení, EICAR ve Stažených souborech zachycen i po vypnutí a zapnutí,
+další aktualizace přes banner.

@@ -119,10 +119,11 @@ dependencies = [
 
 [[package]]
 name = "antishield-app"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "antishield-core",
  "chrono",
+ "plist",
  "reqwest",
  "rustls",
  "serde",
@@ -140,7 +141,7 @@ dependencies = [
 
 [[package]]
 name = "antishield-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "antishield-core",
  "clap",
@@ -153,7 +154,7 @@ dependencies = [
 
 [[package]]
 name = "antishield-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aho-corasick",
  "antishield-core",

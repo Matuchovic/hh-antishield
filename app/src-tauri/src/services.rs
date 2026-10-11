@@ -2,20 +2,22 @@
 //! a oznámení. Všechny běží mimo hlavní vlákno, aby okno nesekalo.
 
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use antishield_core::error::ErrorDto;
 use antishield_core::watch::FolderWatcher;
 use antishield_core::{
-    InspectResult, RuleUpdateOutcome, ScanEvent, ScanObserver, ScanRequest, ScanSummary, SkipReason,
+    Engine, Finding, FindingOrigin, InspectResult, RuleUpdateOutcome, ScanEvent, ScanObserver,
+    ScanRequest, ScanSummary, Severity, SkipReason, system,
 };
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
-use crate::settings::{PresetScan, Schedule};
-use crate::state::{AppState, Detection, DetectionAction, folder_readable, now_ms};
+use crate::settings::{PresetScan, Schedule, Settings};
+use crate::state::{AppState, CatchUp, Detection, DetectionAction, folder_readable, now_ms};
 
 const RULES_BASE: &str = "https://github.com/Matuchovic/hh-antishield/releases/download/rules";
 const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
@@ -232,7 +234,7 @@ pub fn apply_protection(app: &AppHandle) {
     }
     let excluded = vec![state.data_dir.clone()];
     let handle = app.clone();
-    match FolderWatcher::start(&settings.watch_paths(), excluded, move |files| {
+    match FolderWatcher::start(&protected_folders(&settings), excluded, move |files| {
         on_new_files(&handle, files);
     }) {
         Ok(watcher) => {
@@ -243,6 +245,65 @@ pub fn apply_protection(app: &AppHandle) {
     }
 }
 
+/// Kdy naposledy běžela ochrana (soubor v datech aplikace, ms od epochy).
+const HEARTBEAT_FILE: &str = "protection-heartbeat";
+/// Rezerva: soubory zapsané těsně před ukončením se zkontrolují znovu.
+const HEARTBEAT_MARGIN_MS: u64 = 5 * 60 * 1000;
+/// Bez záznamu (první spuštění) se kontroluje poslední den.
+const FIRST_RUN_LOOKBACK_MS: u64 = 24 * 60 * 60 * 1000;
+const CATCH_UP_MAX_FILES: usize = 5_000;
+const CATCH_UP_MAX_VISITED: usize = 200_000;
+
+/// Zapíše, že ochrana právě běží (volá se pravidelně a při ukončení).
+pub fn record_heartbeat(state: &AppState) {
+    if state.settings().protection_enabled {
+        let _ = std::fs::write(state.data_dir.join(HEARTBEAT_FILE), now_ms().to_string());
+    }
+}
+
+/// Od kdy dohnat kontrolu: od posledního běhu ochrany (s rezervou), poprvé den zpět.
+fn catch_up_since(heartbeat: Option<u64>, now: u64) -> u64 {
+    heartbeat.map_or_else(
+        || now.saturating_sub(FIRST_RUN_LOOKBACK_MS),
+        |last| last.saturating_sub(HEARTBEAT_MARGIN_MS),
+    )
+}
+
+/// Po spuštění zkontroluje soubory, které v hlídaných složkách přibyly nebo se
+/// změnily, když ochrana neběžela; nálezy se řeší stejně jako při hlídání.
+pub fn catch_up(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings();
+    if !settings.protection_enabled || state.engine().is_err() {
+        return;
+    }
+    let now = now_ms();
+    let heartbeat = std::fs::read_to_string(state.data_dir.join(HEARTBEAT_FILE))
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    let since = catch_up_since(heartbeat, now);
+    let found = antishield_core::watch::changed_since(
+        &protected_folders(&settings),
+        std::slice::from_ref(&state.data_dir),
+        since,
+        CATCH_UP_MAX_FILES,
+        CATCH_UP_MAX_VISITED,
+    );
+    let checked = found.files.len();
+    for batch in found.files.chunks(64) {
+        on_new_files(app, batch.to_vec());
+    }
+    if let Ok(mut last) = state.last_catch_up.lock() {
+        *last = Some(CatchUp {
+            at_ms: now,
+            since_ms: since,
+            checked,
+            complete: found.complete,
+        });
+    }
+    record_heartbeat(&state);
+}
+
 fn file_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -250,12 +311,108 @@ fn file_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// Odkud nález pochází: podle toho se volí zásah a text oznámení.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Source {
+    /// Soubor v hlídané složce.
+    File,
+    /// Běžící program nebo program spouštěný po přihlášení.
+    Program,
+}
+
+/// Programy se samy ukončí a izolují jen při jistém nálezu (vysoká
+/// závažnost); méně jisté nálezy se jen nahlásí, aby omylem nezastavily
+/// legitimní aplikaci. Soubory se izolují vždy (obnovit jdou kdykoli).
+fn auto_remediate(auto_quarantine: bool, finding: &Finding, source: Source) -> bool {
+    auto_quarantine
+        && (source == Source::File
+            || matches!(finding.severity, Severity::High | Severity::Critical))
+}
+
+/// Zásah podle nastavení, oznámení a záznam do přehledu zachycených hrozeb.
+fn record_detection(app: &AppHandle, engine: &Engine, finding: Finding, source: Source) {
+    let state = app.state::<AppState>();
+    let action = if auto_remediate(state.settings().auto_quarantine, &finding, source) {
+        let report = engine.remediate(&finding);
+        match report.quarantined {
+            Some(item) => DetectionAction::Quarantined { item_id: item.id },
+            None => DetectionAction::Failed {
+                reason: report.problems.join("; "),
+            },
+        }
+    } else {
+        DetectionAction::Detected
+    };
+    let name = file_name(&finding.path);
+    let rule = &finding.rule_name;
+    let (title, body) = match (&action, source) {
+        (DetectionAction::Quarantined { .. }, Source::File) => (
+            "Hrozba zachycena a izolována",
+            format!("{name}: {rule}. Soubor je v karanténě."),
+        ),
+        (DetectionAction::Quarantined { .. }, Source::Program) => (
+            "Škodlivý program zastaven",
+            format!("{name}: {rule}. Program je ukončený a v karanténě."),
+        ),
+        (DetectionAction::Detected, Source::File) => (
+            "Zachycena hrozba",
+            format!("{name}: {rule}. Otevřete aplikaci a vyčistěte ho."),
+        ),
+        (DetectionAction::Detected, Source::Program) => (
+            "Podezřelý program",
+            format!("{name}: {rule}. Otevřete aplikaci a rozhodněte, jestli ho vyčistit."),
+        ),
+        (DetectionAction::Failed { .. }, _) => (
+            "Hrozbu se nepodařilo izolovat",
+            format!("{name}: {rule}. Otevřete aplikaci."),
+        ),
+    };
+    notify(app, title, &body);
+    let detection = Detection {
+        at_ms: now_ms(),
+        finding,
+        action,
+    };
+    let _ = app.emit("protection-event", &detection);
+    state.add_detection(detection);
+}
+
+/// Zkontroluje programy (s původem) a nálezy předá k zásahu.
+fn inspect_programs(app: &AppHandle, engine: &Engine, programs: Vec<(PathBuf, FindingOrigin)>) {
+    if programs.is_empty() {
+        return;
+    }
+    let paths: Vec<PathBuf> = programs.iter().map(|(path, _)| path.clone()).collect();
+    for ((_, origin), (_, result)) in programs.into_iter().zip(engine.inspect_paths(&paths)) {
+        if let InspectResult::Scanned { findings, .. } = result
+            && let Some(mut finding) = findings.into_iter().next()
+        {
+            finding.origin = Some(origin);
+            record_detection(app, engine, finding, Source::Program);
+        }
+    }
+}
+
 fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
     let state = app.state::<AppState>();
     let Ok(engine) = state.engine() else {
         return;
     };
-    let settings = state.settings();
+    // Nová položka po přihlášení: zkontrolovat i program, který spouští.
+    let programs: Vec<(PathBuf, FindingOrigin)> = files
+        .iter()
+        .filter_map(|file| system::startup_item_at(file))
+        .filter_map(|item| {
+            let program = item.program?;
+            Some((
+                program,
+                FindingOrigin::StartupItem {
+                    location: item.location,
+                    label: item.label,
+                },
+            ))
+        })
+        .collect();
     for (path, result) in engine.inspect_paths(&files) {
         let findings = match result {
             InspectResult::Scanned { findings, .. } => findings,
@@ -270,47 +427,67 @@ fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
             InspectResult::Skipped(_) => continue,
         };
         // Jeden zásah na soubor: první nález rozhoduje, zbytek je ve výsledcích.
-        let Some(finding) = findings.into_iter().next() else {
-            continue;
-        };
-        let action = if settings.auto_quarantine {
-            let report = engine.remediate(&finding);
-            match report.quarantined {
-                Some(item) => DetectionAction::Quarantined { item_id: item.id },
-                None => DetectionAction::Failed {
-                    reason: report.problems.join("; "),
-                },
-            }
-        } else {
-            DetectionAction::Detected
-        };
-        let name = file_name(&finding.path);
-        let (title, body) = match &action {
-            DetectionAction::Quarantined { .. } => (
-                "Hrozba zachycena a izolována",
-                format!("{name}: {}. Soubor je v karanténě.", finding.rule_name),
-            ),
-            DetectionAction::Detected => (
-                "Zachycena hrozba",
-                format!(
-                    "{name}: {}. Otevřete aplikaci a vyčistěte ho.",
-                    finding.rule_name
-                ),
-            ),
-            DetectionAction::Failed { .. } => (
-                "Hrozbu se nepodařilo izolovat",
-                format!("{name}: {}. Otevřete aplikaci.", finding.rule_name),
-            ),
-        };
-        notify(app, title, &body);
-        let detection = Detection {
-            at_ms: now_ms(),
-            finding,
-            action,
-        };
-        let _ = app.emit("protection-event", &detection);
-        state.add_detection(detection);
+        if let Some(finding) = findings.into_iter().next() {
+            record_detection(app, &engine, finding, Source::File);
+        }
     }
+    inspect_programs(app, &engine, programs);
+}
+
+/// Jak často se hledají nově spuštěné programy.
+const PROCESS_POLL: Duration = Duration::from_secs(3);
+
+/// Hlídání spuštěných programů: každý nový program (mimo systémové) se
+/// zkontroluje do několika sekund od spuštění; škodlivý se ukončí a izoluje.
+/// Spuštění tím nejde předem zablokovat.
+pub fn start_process_monitor(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("antishield-processes".into())
+        .spawn(move || {
+            let mut monitor = system::ProcessMonitor::new();
+            loop {
+                let state = app.state::<AppState>();
+                if state.settings().protection_enabled
+                    && let Ok(engine) = state.engine()
+                {
+                    let fresh = monitor.poll();
+                    let count = u64::try_from(fresh.len()).unwrap_or(u64::MAX);
+                    state.programs_checked.fetch_add(count, Ordering::Relaxed);
+                    if let Ok(mut since) = state.programs_since_ms.lock() {
+                        since.get_or_insert_with(now_ms);
+                    }
+                    let programs = fresh
+                        .into_iter()
+                        .map(|p| {
+                            let origin = FindingOrigin::Process {
+                                pid: p.pid,
+                                name: p.name,
+                            };
+                            (p.exe, origin)
+                        })
+                        .collect();
+                    inspect_programs(&app, &engine, programs);
+                }
+                std::thread::sleep(PROCESS_POLL);
+            }
+        })
+        .ok();
+}
+
+/// Hlídané složky: vybrané uživatelem a složky položek po přihlášení.
+fn protected_folders(settings: &Settings) -> Vec<PathBuf> {
+    // macOS: složku LaunchAgents si malware často zakládá sám; ať je hlídaná.
+    #[cfg(target_os = "macos")]
+    if let Some(home) = system::home_dir() {
+        let _ = std::fs::create_dir_all(home.join("Library/LaunchAgents"));
+    }
+    let mut folders = settings.watch_paths();
+    for dir in system::startup_dirs() {
+        if dir.is_dir() && !folders.contains(&dir) {
+            folders.push(dir);
+        }
+    }
+    folders
 }
 
 // ---------- Plánované kontroly ----------
@@ -368,6 +545,7 @@ pub fn start_scheduler(app: AppHandle) {
             }
             loop {
                 std::thread::sleep(SCHEDULER_TICK);
+                record_heartbeat(&state);
                 let settings = state.settings();
                 let Some(due) = last_due_ms(
                     settings.schedule,
@@ -396,7 +574,10 @@ pub fn start_scheduler(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::last_due_at;
+    use super::{
+        FIRST_RUN_LOOKBACK_MS, HEARTBEAT_MARGIN_MS, Source, auto_remediate, catch_up_since,
+        last_due_at,
+    };
     use crate::settings::Schedule;
     use chrono::{TimeZone, Utc};
 
@@ -442,5 +623,59 @@ mod tests {
     #[test]
     fn disabled_schedule_is_never_due() {
         assert_eq!(last_due_at(&at(14, 13), Schedule::Off, 12, 3), None);
+    }
+
+    #[test]
+    fn catch_up_starts_where_protection_stopped() {
+        let now = 1_800_000_000_000;
+        let last = now - 3_600_000;
+        assert_eq!(catch_up_since(Some(last), now), last - HEARTBEAT_MARGIN_MS);
+        assert_eq!(catch_up_since(None, now), now - FIRST_RUN_LOOKBACK_MS);
+    }
+
+    #[test]
+    fn programs_are_stopped_automatically_only_on_confident_findings() {
+        use antishield_core::{FileIdentity, Finding, Severity};
+        let finding = |severity| Finding {
+            path: "/Applications/X.app/Contents/MacOS/x".into(),
+            sha256: String::new(),
+            rule_id: "r".into(),
+            rule_name: "r".into(),
+            rule_version: 1,
+            rule_description: String::new(),
+            severity,
+            test_only: false,
+            evidence: Vec::new(),
+            identity: FileIdentity::default(),
+            changed_during_read: false,
+            archive_entry: None,
+            origin: None,
+        };
+        assert!(auto_remediate(
+            true,
+            &finding(Severity::High),
+            Source::Program
+        ));
+        assert!(auto_remediate(
+            true,
+            &finding(Severity::Critical),
+            Source::Program
+        ));
+        assert!(!auto_remediate(
+            true,
+            &finding(Severity::Medium),
+            Source::Program
+        ));
+        assert!(auto_remediate(true, &finding(Severity::Low), Source::File));
+        assert!(!auto_remediate(
+            false,
+            &finding(Severity::Critical),
+            Source::Program
+        ));
+        assert!(!auto_remediate(
+            false,
+            &finding(Severity::High),
+            Source::File
+        ));
     }
 }

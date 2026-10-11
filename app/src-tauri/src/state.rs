@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antishield_core::error::ErrorDto;
@@ -86,6 +87,12 @@ pub struct RuntimeInfo {
     pub detections: Vec<Detection>,
     pub rules: RulesStatus,
     pub last_scheduled_run_ms: Option<u64>,
+    pub background_problem: Option<String>,
+    pub last_catch_up: Option<CatchUp>,
+    /// Hlídají se i složky položek po přihlášení.
+    pub startup_watched: bool,
+    pub programs_checked: u64,
+    pub programs_since_ms: Option<u64>,
 }
 
 pub struct AppState {
@@ -100,6 +107,26 @@ pub struct AppState {
     pub protection: Mutex<ProtectionRuntime>,
     detections: Mutex<VecDeque<Detection>>,
     pub last_scheduled_run_ms: Mutex<Option<u64>>,
+    /// Aplikace běží jako agent na pozadí (spustil ji launchd / přihlášení).
+    pub background_launch: AtomicBool,
+    /// Uživatel ochranu z lišty vědomě vypnul (agent se nemá obnovit).
+    pub explicit_quit: AtomicBool,
+    /// Proč ochrana na pozadí neběží (např. aplikace není v Aplikacích).
+    pub background_problem: Mutex<Option<String>>,
+    pub last_catch_up: Mutex<Option<CatchUp>>,
+    /// Kolik spuštěných programů hlídání zkontrolovalo a od kdy.
+    pub programs_checked: AtomicU64,
+    pub programs_since_ms: Mutex<Option<u64>>,
+}
+
+/// Kontrola souborů, které přibyly, když ochrana neběžela.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatchUp {
+    pub at_ms: u64,
+    pub since_ms: u64,
+    pub checked: usize,
+    pub complete: bool,
 }
 
 pub fn now_ms() -> u64 {
@@ -121,6 +148,12 @@ impl AppState {
             protection: Mutex::new(ProtectionRuntime::default()),
             detections: Mutex::new(VecDeque::new()),
             last_scheduled_run_ms: Mutex::new(None),
+            background_launch: AtomicBool::new(false),
+            explicit_quit: AtomicBool::new(false),
+            background_problem: Mutex::new(None),
+            last_catch_up: Mutex::new(None),
+            programs_checked: AtomicU64::new(0),
+            programs_since_ms: Mutex::new(None),
         }
     }
 
@@ -320,24 +353,28 @@ impl AppState {
     }
 
     pub fn runtime_info(&self) -> RuntimeInfo {
+        // Nastavení dřív než zámek ochrany (vždy stejné pořadí zámků).
+        let chosen = self.settings().watch_paths();
         let runtime = lock(&self.protection);
+        let watched: &[PathBuf] = runtime.watcher.as_ref().map_or(&[], |w| w.watched());
         RuntimeInfo {
-            watched: runtime
-                .watcher
-                .as_ref()
-                .map(|w| {
-                    w.watched()
-                        .iter()
-                        .map(|p| p.display().to_string())
-                        .collect()
-                })
-                .unwrap_or_default(),
+            // Složky vybrané uživatelem; složky položek po přihlášení zvlášť.
+            watched: watched
+                .iter()
+                .filter(|p| chosen.contains(p))
+                .map(|p| p.display().to_string())
+                .collect(),
+            startup_watched: watched.iter().any(|p| !chosen.contains(p)),
+            programs_checked: self.programs_checked.load(Ordering::Relaxed),
+            programs_since_ms: *lock(&self.programs_since_ms),
             watching_since_ms: runtime.started_at_ms,
             watch_error: runtime.error.clone(),
             access_denied: runtime.access_denied.clone(),
             detections: lock(&self.detections).iter().cloned().collect(),
             rules: lock(&self.rules_status).clone(),
             last_scheduled_run_ms: *lock(&self.last_scheduled_run_ms),
+            background_problem: lock(&self.background_problem).clone(),
+            last_catch_up: lock(&self.last_catch_up).clone(),
         }
     }
 }

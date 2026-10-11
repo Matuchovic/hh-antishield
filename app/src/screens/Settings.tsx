@@ -1,6 +1,6 @@
 import { Icon } from "../components/Icon";
 import { Toggle } from "../components/Toggle";
-import { WEEKDAYS, relativeTime, translateReason } from "../lib/format";
+import { WEEKDAYS, capitalize, relativeTime, translateReason } from "../lib/format";
 import type { PresetScan, Schedule } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
 import type { Updater } from "../lib/useUpdater";
@@ -18,6 +18,7 @@ export function Settings({ app, updater }: { app: AntiShield; updater: Updater }
   }
   const save = app.saveSettings;
   const rules = runtime?.rules;
+  const mac = app.info?.platform.startsWith("macos") ?? true;
 
   return (
     <div className="screen settings">
@@ -161,21 +162,30 @@ export function Settings({ app, updater }: { app: AntiShield; updater: Updater }
       </section>
 
       <section className="panel" aria-labelledby="s-startup">
-        <h2 id="s-startup">Spouštění</h2>
+        <h2 id="s-startup">Běh na pozadí</h2>
         <div className="toggle-list">
           <Toggle
-            label="Spustit po přihlášení"
-            detail="Ochrana naběhne sama po startu počítače (skrytá v liště)."
+            label="Ochrana na pozadí"
+            detail={
+              mac
+                ? "Spustí se po přihlášení a hlídá, i když aplikaci zavřete nebo ukončíte. Úplně vypnout jde z ikony v liště."
+                : "Spustí se po přihlášení, skrytá v liště."
+            }
             checked={settings.launchAtLogin}
             onChange={(v) => void save({ launchAtLogin: v })}
           />
           <Toggle
             label="Po zavření okna běžet dál"
-            detail="Okno se skryje do lišty a ochrana pokračuje. Úplně ukončit jde z ikony v liště."
+            detail="Okno se skryje do lišty a ochrana pokračuje."
             checked={settings.keepRunningInBackground}
             onChange={(v) => void save({ keepRunningInBackground: v })}
           />
         </div>
+        {runtime?.backgroundProblem ? (
+          <p className="notice tone-alert" role="alert">
+            {capitalize(translateReason(runtime.backgroundProblem))}.
+          </p>
+        ) : null}
       </section>
 
       <section className="panel" aria-labelledby="s-look">
