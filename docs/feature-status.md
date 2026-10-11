@@ -1,4 +1,4 @@
-# Stav funkcí – v0.4
+# Stav funkcí – v0.4.1
 
 Platí pravidlo: aplikace nikdy netvrdí ochranu, kterou nemá. V0.2 hlásí
 „Váš Mac je hlídaný“, jen když skutečně běží hlídání složek i ověřené
@@ -30,6 +30,10 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 | Plánovaná kontrola denně / týdně, zmeškaná doběhne po spuštění | unit testy `services.rs` |
 | Nastavení (ochrana, karanténa, oznámení, plán, aktualizace, spouštění, zvuk a animace) | unit test `settings.rs`, rozhraní |
 | Auditní log s řetězením SHA-256, pravdivý souhrn stavu, self-test | `audit.rs`, `status.rs`, `format.test.ts` |
+| Audit: zapisuje jen jeden proces (zámek); poškozený soubor se uzavře a problém se ohlásí jednou se srozumitelným popisem | unit testy `audit.rs`, `tests/audit.rs`, `format.test.ts` |
+| Žádost o plný přístup k disku při spuštění (macOS): panel Nastavení, pozná povolení do 5 s, nabídne restart | průchod v Chromiu s náhradou IPC; na Macu ověří uživatel |
+| Jen jedna instance AntiShieldu na macOS (agent počká, ruční spuštění předá okno) | unit testy `instance.rs`; launchd ověří uživatel |
+| Poslední kontrola po restartu; nález z ní se před vyčištěním znovu ověří | unit testy `state.rs` |
 | Aktualizace aplikace přes banner (podpis, GitHub Releases) | vydání 0.1.1 a 0.1.2 |
 
 ## Částečně

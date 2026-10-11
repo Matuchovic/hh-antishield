@@ -63,7 +63,7 @@ impl ScanRequest {
 }
 
 /// Souvislost nálezu: běžící proces nebo položka spouštěná po přihlášení.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -87,7 +87,7 @@ pub enum Severity {
 }
 
 /// Důkaz, proč pravidlo soubor označilo.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -112,7 +112,7 @@ pub enum Evidence {
 
 /// Identita souboru v okamžiku čtení. Slouží k odhalení změny během kontroly
 /// a později k ověření, že karanténa míří na stejný soubor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FileIdentity {
     /// Zařízení (na Windows ve v0.1 vždy 0).
@@ -127,7 +127,7 @@ pub struct FileIdentity {
 }
 
 /// Jeden nález.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Finding {
     pub path: String,
@@ -150,7 +150,7 @@ pub struct Finding {
 }
 
 /// Proč položka nebyla zkontrolována.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -203,14 +203,14 @@ impl SkipReason {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkippedItem {
     pub path: String,
     pub reason: SkipReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkipCount {
     pub reason: String,
@@ -228,7 +228,7 @@ pub struct ScanProgress {
     pub elapsed_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "type",
     rename_all = "camelCase",
@@ -241,7 +241,7 @@ pub enum ScanOutcome {
 }
 
 /// Informace o načtené sadě pravidel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RulePackInfo {
     pub pack_id: String,
@@ -260,7 +260,7 @@ pub struct RulePackInfo {
 }
 
 /// Zdroj pravidel YARA v sadě.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleSourceInfo {
     pub id: String,
@@ -270,7 +270,7 @@ pub struct RuleSourceInfo {
     pub rule_count: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanSummary {
     pub scan_id: String,

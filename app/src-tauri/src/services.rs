@@ -45,6 +45,7 @@ impl ScanObserver for EmitObserver {
             if let Ok(mut last) = self.last_summary.lock() {
                 *last = Some(summary.clone());
             }
+            crate::state::save_summary(&self.app.state::<AppState>().data_dir, summary);
             let real: Vec<_> = summary.findings.iter().filter(|f| !f.test_only).collect();
             if !real.is_empty() {
                 notify(

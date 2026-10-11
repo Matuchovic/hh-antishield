@@ -1,7 +1,7 @@
 //! Příkazy, které smí volat rozhraní. Každý je povolený jednotlivě
 //! v `capabilities/default.json`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -9,8 +9,8 @@ use antishield_core::error::ErrorDto;
 use antishield_core::posture::PostureCheck;
 use antishield_core::status::ProtectionSummary;
 use antishield_core::{
-    AuditEvent, EngineInfo, QuarantineItem, RemediationReport, RuleUpdateOutcome, ScanRequest,
-    ScanSummary, SelfTestReport,
+    AuditEvent, EngineInfo, InspectResult, QuarantineItem, RemediationReport, RuleUpdateOutcome,
+    ScanRequest, ScanSummary, SelfTestReport,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -152,18 +152,33 @@ pub async fn remediate(
 ) -> Result<Vec<RemediationReport>, ErrorDto> {
     let state = app.state::<AppState>();
     let engine = state.engine()?;
-    let findings = state.known_findings(&paths);
-    if findings.is_empty() {
-        return Err(app_error("unknown_finding", "no matching finding to clean"));
-    }
+    let mut findings = state.known_findings(&paths);
+    // Výsledek z minulého spuštění: soubor se nejdřív znovu zkontroluje a izoluje
+    // se jen to, co pravidla najdou teď (uložený souhrn sám o zásahu nerozhoduje).
+    let recheck: Vec<PathBuf> = state
+        .restored_finding_paths(&paths)
+        .into_iter()
+        .filter(|path| !findings.iter().any(|f| Path::new(&f.path) == path))
+        .collect();
     let reports = tauri::async_runtime::spawn_blocking(move || {
-        findings
+        for (_, result) in engine.inspect_paths(&recheck) {
+            if let InspectResult::Scanned {
+                findings: fresh, ..
+            } = result
+            {
+                findings.extend(fresh);
+            }
+        }
+        if findings.is_empty() {
+            return Err(app_error("unknown_finding", "no matching finding to clean"));
+        }
+        Ok(findings
             .iter()
             .map(|finding| engine.remediate(finding))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>())
     })
     .await
-    .map_err(|e| app_error("remediate", &e.to_string()))?;
+    .map_err(|e| app_error("remediate", &e.to_string()))??;
     let _ = app.emit("quarantine-changed", ());
     Ok(reports)
 }
