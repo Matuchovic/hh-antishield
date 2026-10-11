@@ -291,6 +291,7 @@ fn main() {
                         services::apply_protection(&handle);
                         services::start_rules_updater(handle.clone());
                         services::start_scheduler(handle.clone());
+                        services::start_process_monitor(handle.clone());
                         services::catch_up(&handle);
                     }
                 })?;
@@ -329,6 +330,7 @@ fn main() {
             commands::quarantine_restore,
             commands::quarantine_delete,
             commands::posture_checks,
+            commands::open_system_settings,
             commands::update_rules_now,
             commands::runtime_info,
             commands::get_settings,

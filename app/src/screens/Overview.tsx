@@ -48,7 +48,7 @@ const PILL: Record<ProtectionLevel, { text: string; tone: Tone }> = {
 
 const TILES: { n: string; title: string; text: string; art: TileArtKind; screen: Screen }[] = [
   { n: "01", title: "Kontrola počítače", text: "Rychlá, úplná nebo jen vybrané složky.", art: "folder", screen: "scan" },
-  { n: "02", title: "Ochrana v reálném čase", text: "Hlídá stažené soubory, Plochu a Dokumenty.", art: "lock", screen: "realtime" },
+  { n: "02", title: "Ochrana v reálném čase", text: "Hlídá stažené soubory, Plochu, Dokumenty a spuštěné programy.", art: "lock", screen: "realtime" },
   { n: "03", title: "Bezpečnost systému", text: "Gatekeeper, SIP, FileVault a firewall.", art: "wrench", screen: "systemcare" },
 ];
 
@@ -194,7 +194,7 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
             const state = stateOf(layer.kind);
             const desc =
               layer.kind === "realTimeProtection" && runtime?.watched.length
-                ? `Hlídá ${formatCount(runtime.watched.length, "složku", "složky", "složek")}`
+                ? `Hlídá ${formatCount(runtime.watched.length, "složku", "složky", "složek")}${runtime.programsSinceMs ? " a programy" : ""}`
                 : layer.desc;
             return (
               <li key={layer.kind} className={`layer-row tone-${stateTone(state)}`}>

@@ -16,6 +16,7 @@ fn main() {
         "quarantine_restore",
         "quarantine_delete",
         "posture_checks",
+        "open_system_settings",
         "update_rules_now",
         "runtime_info",
         "get_settings",

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Icon } from "../components/Icon";
+import { api } from "../lib/api";
 import type { PostureState } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
 
@@ -7,6 +8,12 @@ const STATE_TEXT: Record<PostureState, string> = {
   ok: "Zapnuto",
   warning: "Vypnuto",
   unknown: "Nelze zjistit",
+};
+
+/** Ochrany, ke kterým jde otevřít příslušný panel Nastavení systému. */
+const SETTINGS_PAGES: Record<string, string[]> = {
+  macos: ["gatekeeper", "filevault", "firewall", "xprotect"],
+  windows: ["defender", "firewall"],
 };
 
 const STATE_TONE: Record<PostureState, string> = {
@@ -23,6 +30,8 @@ export function SystemSecurity({ app }: { app: AntiShield }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const warnings = posture?.filter((c) => c.state === "warning").length ?? 0;
+  const os = app.info?.platform.split("-")[0] ?? "";
+  const pages = SETTINGS_PAGES[os] ?? [];
 
   return (
     <div className="screen">
@@ -53,6 +62,15 @@ export function SystemSecurity({ app }: { app: AntiShield }) {
                   <strong>{check.title}</strong>
                   <span className="muted">{check.detail}</span>
                   {check.advice ? <span className="posture-advice">{check.advice}</span> : null}
+                  {check.state !== "ok" && pages.includes(check.id) ? (
+                    <button
+                      type="button"
+                      className="btn-link"
+                      onClick={() => void api.openSystemSettings(check.id).catch(() => undefined)}
+                    >
+                      {os === "macos" ? "Otevřít Nastavení systému" : "Otevřít Zabezpečení Windows"}
+                    </button>
+                  ) : null}
                 </span>
                 <span className="posture-state">{STATE_TEXT[check.state]}</span>
               </li>

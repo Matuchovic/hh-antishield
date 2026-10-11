@@ -143,7 +143,7 @@ export function headline(
         ? {
             title: `${subject} hlídaný`,
             detail:
-              "Nové soubory v hlídaných složkách se kontrolují automaticky a pravidla se aktualizují. Spouštění programů zatím neblokujeme.",
+              "Nové soubory, spuštěné programy i položky po přihlášení se kontrolují automaticky a pravidla se aktualizují. Spuštění programu zatím předem neblokujeme.",
             tone: "good",
           }
         : { title: "Stav nelze potvrdit", detail: "Hlídání složek neběží.", tone: "alert" };

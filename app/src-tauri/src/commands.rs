@@ -207,6 +207,50 @@ pub async fn posture_checks() -> Result<Vec<PostureCheck>, ErrorDto> {
         .map_err(|e| app_error("posture", &e.to_string()))
 }
 
+/// Panel Nastavení systému k danému ochrannému prvku (pevný seznam adres,
+/// rozhraní předává jen označení). Jen otevře okno; nic nemění.
+#[cfg(target_os = "macos")]
+fn system_settings_url(check_id: &str) -> Option<&'static str> {
+    match check_id {
+        "gatekeeper" => Some("x-apple.systempreferences:com.apple.preference.security?General"),
+        "filevault" => Some("x-apple.systempreferences:com.apple.preference.security?FileVault"),
+        "firewall" => Some("x-apple.systempreferences:com.apple.preference.security?Firewall"),
+        "xprotect" => Some("x-apple.systempreferences:com.apple.preferences.softwareupdate"),
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn system_settings_url(check_id: &str) -> Option<&'static str> {
+    match check_id {
+        "defender" => Some("windowsdefender:"),
+        "firewall" => Some("windowsdefender://network/"),
+        _ => None,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn system_settings_url(_check_id: &str) -> Option<&'static str> {
+    None
+}
+
+#[tauri::command]
+pub fn open_system_settings(check_id: String) -> Result<(), ErrorDto> {
+    let url = system_settings_url(&check_id)
+        .ok_or_else(|| app_error("unknown_setting", "no settings page for this check"))?;
+    #[cfg(target_os = "macos")]
+    let program = "/usr/bin/open";
+    #[cfg(windows)]
+    let program = "explorer.exe";
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let program = "xdg-open";
+    std::process::Command::new(program)
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| app_error("open_settings", &e.to_string()))
+}
+
 #[tauri::command]
 pub async fn update_rules_now(app: AppHandle) -> Result<RuleUpdateOutcome, ErrorDto> {
     services::update_rules(&app).await

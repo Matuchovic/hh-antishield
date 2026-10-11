@@ -39,6 +39,7 @@ export const api = {
   quarantineRestore: (id: string) => invoke<QuarantineItem>("quarantine_restore", { id }),
   quarantineDelete: (id: string) => invoke<QuarantineItem>("quarantine_delete", { id }),
   postureChecks: () => invoke<PostureCheck[]>("posture_checks"),
+  openSystemSettings: (checkId: string) => invoke<void>("open_system_settings", { checkId }),
   updateRulesNow: () => invoke<RuleUpdateOutcome>("update_rules_now"),
   runtimeInfo: () => invoke<RuntimeInfo>("runtime_info"),
   getSettings: () => invoke<Settings>("get_settings"),

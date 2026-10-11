@@ -2,9 +2,10 @@
 //! přihlášení a typické složky uživatele. Výčet jen čte; zásahy (ukončení
 //! procesu, vypnutí položky) jsou samostatné funkce volané po potvrzení.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::Serialize;
 
@@ -12,6 +13,8 @@ use crate::error::EngineError;
 use crate::types::{FindingOrigin, ScanRequest};
 
 const MAX_STARTUP_ITEMS: usize = 1_000;
+/// Kolik zkontrolovaných programů si hlídání procesů pamatuje.
+const MAX_CHECKED_PROGRAMS: usize = 20_000;
 const MAX_PLIST_BYTES: u64 = 1024 * 1024;
 
 /// Běžící proces se známou cestou ke spustitelnému souboru.
@@ -109,8 +112,118 @@ pub fn terminate_process(pid: u32, expected_exe: &Path) -> Result<bool, EngineEr
     }
 }
 
+/// Program v části disku, kterou chrání systém (macOS SIP, složka Windows).
+/// Hlídání spuštěných programů ho přeskakuje: nejde ho změnit ani izolovat.
+pub fn is_system_program(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    const PREFIXES: &[&str] = &[
+        "/System/",
+        "/bin/",
+        "/sbin/",
+        "/usr/bin/",
+        "/usr/sbin/",
+        "/usr/libexec/",
+        "/usr/lib/",
+        "/usr/share/",
+        "/Library/Apple/",
+        "/private/var/db/",
+    ];
+    #[cfg(not(any(target_os = "macos", windows)))]
+    const PREFIXES: &[&str] = &["/usr/", "/bin/", "/sbin/", "/lib/", "/lib64/"];
+    #[cfg(windows)]
+    {
+        let windir = std::env::var_os("SystemRoot")
+            .map(|v| v.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_else(|| r"c:\windows".into());
+        let text = path.to_string_lossy().to_ascii_lowercase();
+        let text = text.strip_prefix(r"\\?\").unwrap_or(&text);
+        text.starts_with(&format!(r"{}\", windir.trim_end_matches('\\')))
+    }
+    #[cfg(not(windows))]
+    {
+        let text = path.to_string_lossy();
+        PREFIXES.iter().any(|prefix| text.starts_with(prefix))
+    }
+}
+
+/// Hlídání spuštěných programů: `poll` vrátí procesy, jejichž program se
+/// ještě nekontroloval (nebo se od kontroly změnil). Každý program jen
+/// jednou, bez systémových programů a bez vlastní aplikace. Spuštění tím
+/// nejde předem zablokovat; škodlivý proces se ukončí až po startu.
+pub struct ProcessMonitor {
+    system: sysinfo::System,
+    checked: HashMap<PathBuf, (u64, Option<SystemTime>)>,
+    own_exe: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for ProcessMonitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProcessMonitor")
+            .field("checked", &self.checked.len())
+            .finish()
+    }
+}
+
+impl Default for ProcessMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProcessMonitor {
+    pub fn new() -> Self {
+        Self {
+            system: sysinfo::System::new(),
+            checked: HashMap::new(),
+            own_exe: std::env::current_exe().ok(),
+        }
+    }
+
+    /// Procesy s programy, které je potřeba zkontrolovat (seřazené podle PID).
+    pub fn poll(&mut self) -> Vec<ProcessInfo> {
+        use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
+        self.system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+        );
+        let mut seen_now = HashSet::new();
+        let mut fresh = Vec::new();
+        for (pid, process) in self.system.processes() {
+            let Some(exe) = process.exe().filter(|exe| exe.is_absolute()) else {
+                continue;
+            };
+            if is_system_program(exe)
+                || self.own_exe.as_deref() == Some(exe)
+                || !seen_now.insert(exe.to_path_buf())
+            {
+                continue;
+            }
+            let Ok(meta) = fs::metadata(exe) else {
+                continue;
+            };
+            let stamp = (meta.len(), meta.modified().ok());
+            if self.checked.get(exe) == Some(&stamp) {
+                continue;
+            }
+            if self.checked.len() >= MAX_CHECKED_PROGRAMS {
+                self.checked.clear();
+            }
+            self.checked.insert(exe.to_path_buf(), stamp);
+            fresh.push(ProcessInfo {
+                pid: pid.as_u32(),
+                name: process.name().to_string_lossy().chars().take(200).collect(),
+                exe: exe.to_path_buf(),
+            });
+        }
+        fresh.sort_by_key(|p| p.pid);
+        fresh
+    }
+}
+
+/// Složky s položkami spouštěnými po přihlášení nebo startu systému.
 #[cfg(target_os = "macos")]
-fn startup_dirs() -> Vec<PathBuf> {
+pub fn startup_dirs() -> Vec<PathBuf> {
     let mut dirs = vec![
         PathBuf::from("/Library/LaunchAgents"),
         PathBuf::from("/Library/LaunchDaemons"),
@@ -121,8 +234,9 @@ fn startup_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Složky s položkami spouštěnými po přihlášení.
 #[cfg(windows)]
-fn startup_dirs() -> Vec<PathBuf> {
+pub fn startup_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Some(appdata) = std::env::var_os("APPDATA") {
         dirs.push(PathBuf::from(appdata).join(r"Microsoft\Windows\Start Menu\Programs\Startup"));
@@ -135,8 +249,9 @@ fn startup_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Složky s položkami spouštěnými po přihlášení.
 #[cfg(not(any(target_os = "macos", windows)))]
-fn startup_dirs() -> Vec<PathBuf> {
+pub fn startup_dirs() -> Vec<PathBuf> {
     home_dir()
         .map(|home| vec![home.join(".config/autostart")])
         .unwrap_or_default()
@@ -232,6 +347,33 @@ fn registry_items(items: &mut Vec<StartupItem>) {
     }
 }
 
+/// Položka po spuštění definovaná souborem ve složce položek po spuštění
+/// (plist, .desktop, zástupce); jinde nebo pro nečitelný soubor `None`.
+pub fn startup_item_at(path: &Path) -> Option<StartupItem> {
+    if !is_startup_location(path) || !fs::symlink_metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase());
+    let (label, program) = match extension.as_deref() {
+        Some("plist") => program_from_plist(path)?,
+        Some("desktop") => program_from_desktop_entry(path)?,
+        _ => (
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            // Zástupce (.lnk) se nerozbaluje; spustitelný soubor ve složce je program.
+            None,
+        ),
+    };
+    Some(StartupItem {
+        location: path.display().to_string(),
+        label,
+        program,
+    })
+}
+
 /// Položky spouštěné po přihlášení (LaunchAgents/Daemons, Startup, Run, autostart).
 pub fn startup_items() -> Vec<StartupItem> {
     let mut items = Vec::new();
@@ -240,33 +382,8 @@ pub fn startup_items() -> Vec<StartupItem> {
             continue;
         };
         for entry in entries.flatten().take(MAX_STARTUP_ITEMS) {
-            let path = entry.path();
-            let Ok(meta) = fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if !meta.is_file() {
-                continue;
-            }
-            let extension = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_ascii_lowercase());
-            let parsed = match extension.as_deref() {
-                Some("plist") => program_from_plist(&path),
-                Some("desktop") => program_from_desktop_entry(&path),
-                _ => Some((
-                    path.file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    // Zástupce (.lnk) se nerozbaluje; spustitelný soubor ve složce je program.
-                    None,
-                )),
-            };
-            if let Some((label, program)) = parsed {
-                items.push(StartupItem {
-                    location: path.display().to_string(),
-                    label,
-                    program,
-                });
+            if let Some(item) = startup_item_at(&entry.path()) {
+                items.push(item);
             }
         }
     }
@@ -392,5 +509,63 @@ mod tests {
                 .iter()
                 .any(|p| canonical(&p.exe).as_deref() == Some(me.as_path()))
         );
+    }
+
+    #[test]
+    fn system_programs_are_recognized() {
+        #[cfg(target_os = "macos")]
+        {
+            assert!(is_system_program(Path::new("/usr/bin/curl")));
+            assert!(is_system_program(Path::new(
+                "/System/Applications/Mail.app/Contents/MacOS/Mail"
+            )));
+            assert!(!is_system_program(Path::new("/usr/local/bin/tool")));
+            assert!(!is_system_program(Path::new(
+                "/Applications/App.app/Contents/MacOS/App"
+            )));
+        }
+        #[cfg(windows)]
+        {
+            assert!(is_system_program(Path::new(r"C:\Windows\System32\cmd.exe")));
+            assert!(!is_system_program(Path::new(
+                r"C:\Users\eva\Downloads\a.exe"
+            )));
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            assert!(is_system_program(Path::new("/usr/bin/curl")));
+            assert!(!is_system_program(Path::new("/home/eva/Downloads/a")));
+        }
+    }
+
+    /// Nově spuštěný program se nahlásí jednou; další kontrola ho už nevrátí.
+    #[cfg(unix)]
+    #[test]
+    fn new_programs_are_reported_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let program = tmp.path().join("hh-test-sleeper");
+        std::fs::copy("/bin/sleep", &program).unwrap();
+        let mut monitor = ProcessMonitor::new();
+        let mut child = std::process::Command::new(&program)
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let canonical_program = canonical(&program).unwrap();
+        let is_ours =
+            |p: &ProcessInfo| canonical(&p.exe).as_deref() == Some(canonical_program.as_path());
+        let mut first = Vec::new();
+        for _ in 0..20 {
+            first = monitor.poll();
+            if first.iter().any(is_ours) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let second = monitor.poll();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(first.iter().any(is_ours), "{first:?}");
+        assert!(!second.iter().any(is_ours));
+        assert!(first.iter().all(|p| !is_system_program(&p.exe)));
     }
 }

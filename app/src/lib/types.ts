@@ -276,6 +276,9 @@ export interface RuntimeInfo {
   lastScheduledRunMs: number | null;
   backgroundProblem: string | null;
   lastCatchUp: CatchUp | null;
+  startupWatched: boolean;
+  programsChecked: number;
+  programsSinceMs: number | null;
 }
 
 export interface CatchUp {

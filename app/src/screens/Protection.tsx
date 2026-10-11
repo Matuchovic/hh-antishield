@@ -2,8 +2,14 @@ import { Icon } from "../components/Icon";
 import type { Screen } from "../components/Sidebar";
 import { Toggle } from "../components/Toggle";
 import { describeState, displayPath, formatCount, formatDateTime, stateTone } from "../lib/format";
-import type { DetectionAction } from "../lib/types";
+import type { DetectionAction, FindingOrigin } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
+
+function originText(origin: FindingOrigin): string {
+  return origin.type === "process"
+    ? `Běžící proces ${origin.name} (PID ${origin.pid})`
+    : `Spouští se po přihlášení (${origin.label || displayPath(origin.location)})`;
+}
 
 function actionText(action: DetectionAction): string {
   switch (action.type) {
@@ -72,6 +78,22 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
         ) : null}
       </section>
 
+      <section className="panel" aria-labelledby="programs-title">
+        <h2 id="programs-title">Spuštěné programy a položky po přihlášení</h2>
+        <p className="muted">
+          {runtime?.programsSinceMs
+            ? `Od ${formatDateTime(runtime.programsSinceMs)} zkontrolováno ${formatCount(runtime.programsChecked, "spuštěný program", "spuštěné programy", "spuštěných programů")}. `
+            : "Kontrola spuštěných programů naběhne s ochranou. "}
+          Každý nově spuštěný program (mimo systémové) se zkontroluje do několika sekund. Jistě škodlivý se
+          ukončí a izoluje; méně jistý nález se jen nahlásí, ať omylem nezastaví legitimní aplikaci.
+        </p>
+        <p className="muted">
+          {runtime?.startupWatched
+            ? "Hlídají se i položky spouštěné po přihlášení: nová položka se zkontroluje i s programem, který spouští."
+            : "Složky položek spouštěných po přihlášení se zatím nehlídají."}
+        </p>
+      </section>
+
       <section className="panel" aria-labelledby="watched-title">
         <div className="panel-head">
           <h2 id="watched-title">Hlídané složky</h2>
@@ -103,6 +125,7 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
                 <span className="detection-main">
                   <strong>{d.finding.ruleName}</strong>
                   <span className="muted">{displayPath(d.finding.path)}</span>
+                  {d.finding.origin ? <span className="muted">{originText(d.finding.origin)}</span> : null}
                 </span>
                 <span className="detection-side">
                   <span>{actionText(d.action)}</span>
