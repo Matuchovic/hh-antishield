@@ -461,7 +461,7 @@ impl Engine {
         let mut inspector = FileInspector::new(&rules, ScanLimits::default());
         let mut results = Vec::with_capacity(paths.len());
         for path in paths {
-            let result = inspector.inspect(path);
+            let result = inspector.inspect(&resolve_parent(path));
             if let InspectResult::Scanned { findings, .. } = &result {
                 for finding in findings {
                     self.audit(
@@ -706,4 +706,25 @@ impl Engine {
             components,
         }
     }
+}
+
+/// Cesta s vyřešenými symlinky v nadřazených složkách, stejně jako u kořene
+/// kontroly. Na macOS se soubor otevírá s `O_NOFOLLOW_ANY`, takže bez toho by
+/// cesta přes `/var` → `/private/var` skončila jako „symlink“. Poslední složka
+/// se neřeší: symlink místo souboru se dál odmítne.
+#[cfg(unix)]
+fn resolve_parent(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+            std::fs::canonicalize(parent).map_or_else(|_| path.to_path_buf(), |dir| dir.join(name))
+        }
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Na Windows se kontroluje jen samotný soubor (reparse point se odmítne);
+/// kanonická cesta by navíc dostala předponu `\\?\`.
+#[cfg(not(unix))]
+fn resolve_parent(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }

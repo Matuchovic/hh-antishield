@@ -567,3 +567,32 @@ fn single_files_can_be_inspected_outside_a_scan() {
     assert!(report.problems.is_empty(), "{report:?}");
     assert!(!bad.exists());
 }
+
+/// Symlinky v nadřazených složkách se vyřeší (macOS: `/var` → `/private/var`),
+/// symlink místo souboru se ale dál odmítne.
+#[cfg(unix)]
+#[test]
+fn single_file_inspection_resolves_parents_but_not_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = engine(&tmp.path().join("state"));
+    let real = tmp.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    write(&real.join("eicar.com"), &eicar());
+    std::os::unix::fs::symlink(&real, tmp.path().join("via")).unwrap();
+    std::os::unix::fs::symlink(real.join("eicar.com"), real.join("link.com")).unwrap();
+    let results = engine.inspect_paths(&[
+        tmp.path().join("via").join("eicar.com"),
+        real.join("link.com"),
+    ]);
+    match &results[0].1 {
+        antishield_core::InspectResult::Scanned { findings, .. } => {
+            assert!(!findings.is_empty());
+            assert!(!std::path::Path::new(&findings[0].path).starts_with(tmp.path().join("via")));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        &results[1].1,
+        antishield_core::InspectResult::Skipped(antishield_core::SkipReason::Symlink)
+    ));
+}
