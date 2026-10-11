@@ -251,3 +251,16 @@ export function describeAuditEvent(event: AuditEvent): { title: string; detail: 
       return { title, detail: "" };
   }
 }
+
+/** "macos-aarch64" → "macOS Apple Silicon". */
+export function platformName(platform: string): string {
+  const [os = "", arch = ""] = platform.split("-");
+  const osName = ({ macos: "macOS", windows: "Windows", linux: "Linux" } as Record<string, string>)[os] ?? os;
+  const archName =
+    arch === "aarch64" ? (os === "macos" ? "Apple Silicon" : "ARM64") : arch === "x86_64" ? (os === "macos" ? "Intel" : "x64") : arch;
+  return `${osName} ${archName}`.trim();
+}
+
+export function formatDate(ms: number): string {
+  return new Date(ms).toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric", year: "numeric" });
+}

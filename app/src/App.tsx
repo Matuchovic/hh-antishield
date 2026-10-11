@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sidebar, type Screen } from "./components/Sidebar";
 import { describeError } from "./lib/format";
 import { useAntiShield } from "./lib/useAntiShield";
@@ -12,6 +12,19 @@ import { Scan } from "./screens/Scan";
 export function App() {
   const app = useAntiShield();
   const [screen, setScreen] = useState<Screen>("overview");
+
+  // Reflektor pod kurzorem na panelech (jen CSS proměnné, žádný stav).
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      const el = (e.target as Element | null)?.closest?.(".panel, .tile");
+      if (!(el instanceof HTMLElement)) return;
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", `${e.clientX - r.left}px`);
+      el.style.setProperty("--my", `${e.clientY - r.top}px`);
+    };
+    document.addEventListener("pointermove", onMove, { passive: true });
+    return () => document.removeEventListener("pointermove", onMove);
+  }, []);
 
   const content = (() => {
     switch (screen) {
@@ -34,7 +47,14 @@ export function App() {
 
   return (
     <div className="app">
-      <Sidebar screen={screen} onNavigate={setScreen} info={app.info} scanRunning={app.scan.running} />
+      <Sidebar
+        screen={screen}
+        onNavigate={setScreen}
+        info={app.info}
+        level={app.protection?.level ?? null}
+        scanRunning={app.scan.running}
+      />
+      {app.scan.running ? <div className="scan-line" aria-hidden="true" /> : null}
       <main className="content">
         {app.error ? (
           <div className="error-bar" role="alert">
@@ -44,7 +64,9 @@ export function App() {
             </button>
           </div>
         ) : null}
-        {content}
+        <div key={screen} className="view">
+          {content}
+        </div>
       </main>
     </div>
   );

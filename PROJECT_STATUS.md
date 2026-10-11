@@ -7,6 +7,10 @@ v0.1 (ruční skener) hotová. Kód v PR #1 (větev `claude/v0.1-manual-scanner`
 CI zelené na Linuxu, macOS i Windows. Release běh 38115958371 sestavil DMG
 i Windows instalátor (artefakty, self-test prošel).
 
+Rozhraní podle mockupu (logo H&H Security z hhsecurity-web-app, animace;
+obsah zůstává pravdivý: žádné „chráněno“, plánované funkce označené).
+DMG ověřen na skutečném Macu: okno, sandbox a self-test fungují.
+
 ## Architektura
 - `crates/antishield-core` – engine: pravidla podepsaná Ed25519, streamový
   matcher (SHA-256, bajtové vzory, EICAR), bezpečný skener, audit s řetězením
@@ -29,7 +33,7 @@ a entitlements DMG, self-test aplikace na macOS i Windows. Lokálně navíc
 spuštění aplikace pod Xvfb.
 
 ## Známé problémy
-- Aplikace zatím nespuštěna na skutečném Macu ani Windows (sandbox, okno).
+- Aplikace zatím nespuštěna na skutečném Windows.
 - Repozitář je veřejný – zvážit přepnutí na soukromý.
 - Artefakty z Actions nejdou stáhnout z cloudového prostředí Claude (blob storage blokovaná).
 - Archivy se nerozbalují (jen se započítají).

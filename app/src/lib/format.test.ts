@@ -6,6 +6,7 @@ import {
   formatBytes,
   formatCount,
   headline,
+  platformName,
 } from "./format";
 import type { ComponentKind, ComponentState, ComponentStatus, ProtectionLevel } from "./types";
 
@@ -78,5 +79,13 @@ describe("texts", () => {
     expect(formatCount(5, "soubor", "soubory", "souborů")).toBe("5 souborů");
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1_500_000)).toMatch(/^1,5\sMB$/);
+  });
+});
+
+describe("platformName", () => {
+  it("pojmenuje platformy srozumitelně", () => {
+    expect(platformName("macos-aarch64")).toBe("macOS Apple Silicon");
+    expect(platformName("macos-x86_64")).toBe("macOS Intel");
+    expect(platformName("windows-x86_64")).toBe("Windows x64");
   });
 });
