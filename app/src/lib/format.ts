@@ -254,12 +254,16 @@ const ERRORS: Record<string, string> = {
   autostart: "Spuštění po přihlášení se nepodařilo změnit.",
   no_targets: "Není co kontrolovat: žádná ze složek neexistuje.",
   update: "Aktualizaci se nepodařilo stáhnout nebo ověřit. Zkuste to později.",
+  update_location:
+    "Aktualizovat jde jen aplikaci ve složce Aplikace. Ukončete AntiShield, přetáhněte ho z DMG do Aplikací a spusťte odtud.",
   scan_running: "Počkejte na konec kontroly, pak aktualizujte.",
   no_update: "Žádná aktualizace není připravená. Zkontrolujte aktualizace znovu.",
 };
 
 export function describeError(error: ErrorDto): string {
-  return ERRORS[error.code] ?? error.message;
+  const text = ERRORS[error.code] ?? error.message;
+  // U aktualizace ukázat i technický důvod (pomáhá při podpoře).
+  return error.code === "update" && error.message ? `${text} (${error.message})` : text;
 }
 
 export function formatBytes(bytes: number): string {

@@ -352,6 +352,17 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
             "Počkejte na konec kontroly, pak aktualizujte.",
         ));
     }
+    // Aplikaci spuštěnou z DMG nebo z dočasného umístění, kam macOS přesouvá
+    // nepřesunuté stažené aplikace, nejde nahradit (jen pro čtení).
+    #[cfg(target_os = "macos")]
+    if let Ok(exe) = std::env::current_exe()
+        && crate::agent::installed_exe(&exe).is_err()
+    {
+        return Err(app_error(
+            "update_location",
+            "the app does not run from the Applications folder",
+        ));
+    }
     let update = state
         .take_pending_update()
         .ok_or_else(|| app_error("no_update", "Žádná aktualizace není připravená."))?;

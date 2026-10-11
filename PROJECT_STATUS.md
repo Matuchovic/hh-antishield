@@ -68,6 +68,10 @@ Aktualizováno: 2026-10-11 (v0.3.0)
   souborům, Ploše a Dokumentům; bez povolení aplikace hlásí omezené hlídání.
 
 ## Známé problémy
+- Aktualizace přes banner selže, když aplikace neběží ze složky Aplikace
+  (spuštěná z DMG nebo ze Stažených – macOS ji přesune do dočasného umístění
+  jen pro čtení). Od 0.3.1 to banner řekne i s postupem; 0.3.0 je potřeba
+  jednou nainstalovat ručně do Aplikací.
 - Aplikace zatím nespuštěna na skutečném Windows.
 - Self-test v Release dřív běžel na binárce mimo podepsaný balíček, takže
   pád v tvrzeném prostředí neodhalil (opraveno).
