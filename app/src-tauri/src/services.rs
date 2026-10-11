@@ -398,6 +398,11 @@ fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
     let Ok(engine) = state.engine() else {
         return;
     };
+    // Ve složce Mailu jen přílohy, ne zprávy a indexy pošty.
+    let files: Vec<PathBuf> = files
+        .into_iter()
+        .filter(|file| !system::is_mail_store_file(file))
+        .collect();
     // Nová položka po přihlášení: zkontrolovat i program, který spouští.
     let programs: Vec<(PathBuf, FindingOrigin)> = files
         .iter()
@@ -474,6 +479,71 @@ pub fn start_process_monitor(app: AppHandle) {
         .ok();
 }
 
+/// Jak často se kontroluje, kdo má citlivá oprávnění.
+const PRIVACY_POLL: Duration = Duration::from_secs(300);
+const PRIVACY_SNAPSHOT: &str = "privacy-snapshot.json";
+
+/// Přehled oprávnění aplikací (kamera, mikrofon, obrazovka, …) uloží do stavu.
+pub fn refresh_privacy(state: &AppState) -> antishield_core::privacy::PrivacyReport {
+    let report = antishield_core::privacy::report();
+    if let Ok(mut slot) = state.privacy.lock() {
+        *slot = Some((now_ms(), report.clone()));
+    }
+    report
+}
+
+/// Ochrana soukromí: když nová aplikace získá nahrávání obrazovky,
+/// zpřístupnění, sledování vstupu nebo plný přístup k disku (oprávnění, která
+/// zneužívá spyware), AntiShield upozorní. Sám nic nemění.
+pub fn start_privacy_monitor(app: AppHandle) {
+    std::thread::Builder::new()
+        .name("antishield-privacy".into())
+        .spawn(move || {
+            let state = app.state::<AppState>();
+            let path = state.data_dir.join(PRIVACY_SNAPSHOT);
+            let mut known: Option<Vec<antishield_core::privacy::Grant>> = std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+            loop {
+                let report = refresh_privacy(&state);
+                if report.problem.is_none() {
+                    if let Some(before) = &known {
+                        for grant in antishield_core::privacy::new_sensitive(before, &report.grants) {
+                            notify(
+                                &app,
+                                "Nové citlivé oprávnění",
+                                &format!(
+                                    "{} teď smí: {}. Pokud aplikaci nepoznáváte, odeberte oprávnění v Bezpečnosti systému.",
+                                    grant.client,
+                                    privacy_label(&grant.service)
+                                ),
+                            );
+                            let _ = app.emit("privacy-alert", grant);
+                        }
+                    }
+                    if let Ok(bytes) = serde_json::to_vec(&report.grants) {
+                        let _ = std::fs::write(&path, bytes);
+                    }
+                    known = Some(report.grants);
+                }
+                std::thread::sleep(PRIVACY_POLL);
+            }
+        })
+        .ok();
+}
+
+fn privacy_label(service: &str) -> &'static str {
+    match service {
+        "screen" => "nahrávat obrazovku",
+        "accessibility" => "ovládat počítač (zpřístupnění)",
+        "input" => "sledovat klávesnici a myš",
+        "fullDisk" => "číst celý disk",
+        "camera" => "používat kameru",
+        "microphone" => "používat mikrofon",
+        _ => "citlivé oprávnění",
+    }
+}
+
 /// Hlídané složky: vybrané uživatelem a složky položek po přihlášení.
 fn protected_folders(settings: &Settings) -> Vec<PathBuf> {
     // macOS: složku LaunchAgents si malware často zakládá sám; ať je hlídaná.
@@ -482,6 +552,10 @@ fn protected_folders(settings: &Settings) -> Vec<PathBuf> {
         let _ = std::fs::create_dir_all(home.join("Library/LaunchAgents"));
     }
     let mut folders = settings.watch_paths();
+    // Přílohy Apple Mail: jen s plným přístupem k disku (jinak je macOS nedovolí číst).
+    if antishield_core::privacy::full_disk_access() == Some(true) {
+        folders.extend(system::mail_folders());
+    }
     for dir in system::startup_dirs() {
         if dir.is_dir() && !folders.contains(&dir) {
             folders.push(dir);

@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antishield_core::error::ErrorDto;
+use antishield_core::privacy::PrivacyReport;
 use antishield_core::status::{
     ComponentKind, ComponentState, ComponentStatus, ProtectionSummary, summarize_protection,
 };
@@ -117,6 +118,8 @@ pub struct AppState {
     /// Kolik spuštěných programů hlídání zkontrolovalo a od kdy.
     pub programs_checked: AtomicU64,
     pub programs_since_ms: Mutex<Option<u64>>,
+    /// Poslední přehled oprávnění aplikací a kdy vznikl.
+    pub privacy: Mutex<Option<(u64, PrivacyReport)>>,
 }
 
 /// Kontrola souborů, které přibyly, když ochrana neběžela.
@@ -154,6 +157,7 @@ impl AppState {
             last_catch_up: Mutex::new(None),
             programs_checked: AtomicU64::new(0),
             programs_since_ms: Mutex::new(None),
+            privacy: Mutex::new(None),
         }
     }
 
@@ -271,10 +275,13 @@ impl AppState {
                 }
             }
         };
+        let (email, privacy) = self.mail_and_privacy_states(settings.protection_enabled);
         for component in &mut components {
             match component.kind {
                 ComponentKind::RealTimeProtection => component.state = realtime.clone(),
                 ComponentKind::Updates => component.state = updates.clone(),
+                ComponentKind::EmailProtection => component.state = email.clone(),
+                ComponentKind::PrivacyProtection => component.state = privacy.clone(),
                 _ => {}
             }
         }
@@ -282,6 +289,63 @@ impl AppState {
             level: summarize_protection(&components),
             components,
         }
+    }
+
+    /// Přílohy Apple Mail a přehled oprávnění: obojí potřebuje plný přístup
+    /// k disku. Mimo macOS zatím nejsou.
+    fn mail_and_privacy_states(
+        &self,
+        protection_enabled: bool,
+    ) -> (ComponentState, ComponentState) {
+        let Some(fda) = antishield_core::privacy::full_disk_access() else {
+            return (
+                ComponentState::NotImplemented,
+                ComponentState::NotImplemented,
+            );
+        };
+        let need_fda = || ComponentState::Degraded {
+            reason: "full disk access is required".into(),
+        };
+        let mail_dirs = antishield_core::system::mail_folders();
+        let email = if !protection_enabled {
+            ComponentState::Disabled
+        } else if mail_dirs.is_empty() {
+            ComponentState::Degraded {
+                reason: "apple mail is not used".into(),
+            }
+        } else if !fda {
+            need_fda()
+        } else {
+            let runtime = lock(&self.protection);
+            match (&runtime.watcher, runtime.started_at_ms) {
+                (Some(watcher), Some(since))
+                    if watcher.watched().iter().any(|p| mail_dirs.contains(p)) =>
+                {
+                    ComponentState::Running {
+                        verified_at_ms: since,
+                    }
+                }
+                _ => ComponentState::Degraded {
+                    reason: "mail folders are not watched".into(),
+                },
+            }
+        };
+        let privacy = if !fda {
+            need_fda()
+        } else {
+            match &*lock(&self.privacy) {
+                Some((at, report)) if report.problem.is_none() => ComponentState::Running {
+                    verified_at_ms: *at,
+                },
+                Some((_, report)) => ComponentState::Degraded {
+                    reason: report.problem.clone().unwrap_or_default(),
+                },
+                None => ComponentState::Degraded {
+                    reason: "the permission overview is starting".into(),
+                },
+            }
+        };
+        (email, privacy)
     }
 
     pub fn remember_selection(&self, id: String, paths: Vec<PathBuf>) {

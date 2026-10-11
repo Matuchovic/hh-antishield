@@ -27,8 +27,8 @@ const LAYERS: { kind: ComponentKind; icon: IconName; desc: string }[] = [
   { kind: "onDemandScan", icon: "search", desc: "Soubory, které vyberete" },
   { kind: "realTimeProtection", icon: "shield", desc: "Nové soubory ve složkách" },
   { kind: "webProtection", icon: "globe", desc: "Blokování webů" },
-  { kind: "emailProtection", icon: "mail", desc: "Přílohy a odkazy" },
-  { kind: "privacyProtection", icon: "lock", desc: "Osobní data" },
+  { kind: "emailProtection", icon: "mail", desc: "Přílohy v Apple Mail" },
+  { kind: "privacyProtection", icon: "lock", desc: "Oprávnění aplikací" },
 ];
 
 const HEALTH: { kind: ComponentKind; label: string }[] = [

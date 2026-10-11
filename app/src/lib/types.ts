@@ -281,6 +281,17 @@ export interface RuntimeInfo {
   programsSinceMs: number | null;
 }
 
+export interface PrivacyGrant {
+  service: "camera" | "microphone" | "screen" | "accessibility" | "input" | "fullDisk";
+  client: string;
+}
+
+export interface PrivacyReport {
+  fullDiskAccess: boolean | null;
+  grants: PrivacyGrant[];
+  problem: string | null;
+}
+
 export interface CatchUp {
   atMs: number;
   sinceMs: number;

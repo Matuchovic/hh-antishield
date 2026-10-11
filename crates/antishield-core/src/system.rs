@@ -445,7 +445,76 @@ fn add_system_targets(request: &mut ScanRequest) {
     request.origins.extend(origins);
 }
 
-/// Rychlá kontrola: procesy, položky po spuštění, Stažené soubory a Plocha.
+/// Složky rozšíření prohlížečů (Chrome, Edge, Brave, Firefox) ve všech profilech.
+pub fn browser_extension_dirs() -> Vec<PathBuf> {
+    const MAX_PROFILES: usize = 20;
+    #[cfg_attr(not(any(target_os = "macos", windows)), allow(unused_mut))]
+    let mut bases: Vec<(PathBuf, &str)> = Vec::new();
+    #[cfg(target_os = "macos")]
+    if let Some(home) = home_dir() {
+        let support = home.join("Library/Application Support");
+        bases.push((support.join("Google/Chrome"), "Extensions"));
+        bases.push((support.join("Microsoft Edge"), "Extensions"));
+        bases.push((support.join("BraveSoftware/Brave-Browser"), "Extensions"));
+        bases.push((support.join("Firefox/Profiles"), "extensions"));
+    }
+    #[cfg(windows)]
+    {
+        if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+            bases.push((local.join(r"Google\Chrome\User Data"), "Extensions"));
+            bases.push((local.join(r"Microsoft\Edge\User Data"), "Extensions"));
+            bases.push((
+                local.join(r"BraveSoftware\Brave-Browser\User Data"),
+                "Extensions",
+            ));
+        }
+        if let Some(roaming) = std::env::var_os("APPDATA").map(PathBuf::from) {
+            bases.push((roaming.join(r"Mozilla\Firefox\Profiles"), "extensions"));
+        }
+    }
+    let mut dirs = Vec::new();
+    for (base, leaf) in bases {
+        let Ok(profiles) = fs::read_dir(&base) else {
+            continue;
+        };
+        for profile in profiles.flatten().take(MAX_PROFILES) {
+            let dir = profile.path().join(leaf);
+            if dir.is_dir() {
+                dirs.push(dir);
+            }
+        }
+    }
+    dirs
+}
+
+/// Složky Apple Mail s přílohami (přístup vyžaduje plný přístup k disku).
+pub fn mail_folders() -> Vec<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return Vec::new();
+    }
+    let Some(home) = home_dir() else {
+        return Vec::new();
+    };
+    [
+        home.join("Library/Mail"),
+        home.join("Library/Containers/com.apple.mail/Data/Library/Mail Downloads"),
+    ]
+    .into_iter()
+    .filter(|dir| dir.is_dir())
+    .collect()
+}
+
+/// Soubor ve složkách Mailu, který je přílohou (ne zpráva ani index pošty).
+pub fn is_mail_store_file(path: &Path) -> bool {
+    let Some(home) = home_dir() else {
+        return false;
+    };
+    path.starts_with(home.join("Library/Mail"))
+        && !path.components().any(|c| c.as_os_str() == "Attachments")
+}
+
+/// Rychlá kontrola: procesy, položky po spuštění, Stažené soubory, Plocha
+/// a rozšíření prohlížečů.
 pub fn quick_scan_request() -> ScanRequest {
     let mut request = ScanRequest::new(Vec::new());
     if let Some(home) = home_dir() {
@@ -456,6 +525,7 @@ pub fn quick_scan_request() -> ScanRequest {
             }
         }
     }
+    request.roots.extend(browser_extension_dirs());
     add_system_targets(&mut request);
     request.roots.truncate(256);
     request
@@ -567,5 +637,18 @@ mod tests {
         assert!(first.iter().any(is_ours), "{first:?}");
         assert!(!second.iter().any(is_ours));
         assert!(first.iter().all(|p| !is_system_program(&p.exe)));
+    }
+
+    #[test]
+    fn mail_messages_are_skipped_but_attachments_are_not() {
+        let Some(home) = home_dir() else {
+            return;
+        };
+        let mail = home.join("Library/Mail/V10/acc/INBOX.mbox");
+        assert!(is_mail_store_file(&mail.join("Data/Messages/1.emlx")));
+        assert!(!is_mail_store_file(
+            &mail.join("Data/Attachments/1/2/invoice.pdf")
+        ));
+        assert!(!is_mail_store_file(&home.join("Downloads/invoice.pdf")));
     }
 }

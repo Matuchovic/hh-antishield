@@ -1,6 +1,6 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.3.0)
+Aktualizováno: 2026-10-11 (v0.4.0)
 
 ## Stav
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
@@ -9,6 +9,10 @@ Aktualizováno: 2026-10-11 (v0.3.0)
   enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
   Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
   0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.4.0: kontrola obsahu PKG a DMG (macOS), ochrana e-mailových příloh
+  Apple Mail a přehled oprávnění aplikací s upozorněním na nové citlivé
+  oprávnění (obojí s plným přístupem k disku), rozšíření prohlížečů v rychlé
+  kontrole, aktualizace jen z nainstalované aplikace s jasnou chybou (0.3.1).
 - v0.3.0: hlídání spuštěných programů (každé 3 s; jistý nález = ukončit
   a izolovat, méně jistý = nahlásit), hlídání položek po přihlášení i s jejich
   programem, tlačítka do Nastavení systému u vypnutých ochran.
@@ -47,6 +51,13 @@ Aktualizováno: 2026-10-11 (v0.3.0)
 - Pravidla: YARA Forge core, jen licence MIT/Apache/BSD/DRL/CC0/CC-BY/
   Unlicense; podpis klíčem `hh-rules-2026-10` (secret `RULES_SIGNING_KEY`),
   vydání `rules` (prerelease, ne „latest“).
+- DMG se připojuje jen pro čtení, bez Finderu, do soukromé dočasné složky
+  a hned odpojuje; šifrované obrazy se přeskočí. PKG se rozbalí `pkgutil
+  --expand-full`. Limity: 2 GiB PKG / 4 GiB DMG, 20 000 souborů, 2 GiB dat,
+  180 s.
+- Plný přístup k disku je volitelný: bez něj ochrana e-mailů a soukromí
+  hlásí „vyžaduje plný přístup k disku“ a tlačítko otevře správný panel.
+  Databáze oprávnění (TCC) se čte jen přes `sqlite3 -readonly`.
 - Otisky z MalwareBazaar (abuse.ch) nepoužity: export vyžaduje Auth-Key
   a komerční použití jen s placeným předplatným Spamhaus (podmínky abuse.ch,
   oddíl 4 a 7.3). Detekce dál z YARA Forge core (licence pro komerční použití).
@@ -54,12 +65,13 @@ Aktualizováno: 2026-10-11 (v0.3.0)
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
 ## Testy (2026-10-11, lokálně)
-- Rust: 82 testů (jádro 68, CLI 4, aplikace 10), clippy `-D warnings`,
+- Rust: 85 testů na Linuxu (jádro 71, CLI 4, aplikace 10) + test PKG/DMG
+  jen na macOS, clippy `-D warnings`,
   rustfmt; self-test aplikace `--self-test` prošel.
 - Produkční řetězec pravidel lokálně: build → podpis produkčním klíčem →
   verify → self-test → nález pravidlem z Forge. Odhalil chybu: `rules sign`
   kontroloval podpis jako testovací klíč (opraveno + testy).
-- UI: 10 testů vitest, typecheck, build; snímky všech obrazovek v Chromiu
+- UI: 11 testů vitest, typecheck, build; snímky všech obrazovek v Chromiu
   s náhradou IPC; skutečná aplikace pod Xvfb (WebKitGTK) vykreslí přehled.
 - CI v PR #3: jádro zelené na Linuxu, macOS i Windows (macOS odhalil
   odmítnutí cest přes `/var` → `/private/var` při kontrole jednoho souboru;
@@ -88,6 +100,6 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Sloučit PR s 0.3.0 → Release (publish) → na Macu ověřit: ochrana běží po ⌘Q
-i po odhlášení, EICAR ve Stažených souborech zachycen i po vypnutí a zapnutí,
-další aktualizace přes banner.
+Sloučit PR s 0.4.0 → Release (publish) → na Macu: povolit plný přístup
+k disku, ověřit přehled oprávnění, EICAR v DMG/PKG ve Stažených, přílohu
+s EICAR v Apple Mail a aktualizaci přes banner.

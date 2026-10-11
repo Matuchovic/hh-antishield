@@ -2476,6 +2476,45 @@ select {
   gap: 8px;
 }
 
+/* Soukromí: skupiny oprávnění */
+.privacy-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.privacy-group {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(8, 18, 44, 0.6);
+}
+
+.privacy-group p {
+  margin: 0;
+}
+
+.privacy-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+
+.privacy-head .btn-link {
+  margin-left: auto;
+}
+
+.privacy-clients {
+  color: var(--ice);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .detections li {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto;
