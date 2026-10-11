@@ -117,7 +117,7 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
           Ruční kontrola souborů
         </p>
         <p className="hero-tag right">
-          <strong>Verze 0.1</strong>
+          <strong>Verze {__APP_VERSION__}</strong>
           <br />
           {info ? platformName(info.platform) : ""}
         </p>
