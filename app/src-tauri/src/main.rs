@@ -10,6 +10,7 @@
 
 mod agent;
 mod commands;
+mod instance;
 mod services;
 mod settings;
 mod state;
@@ -217,16 +218,27 @@ fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let start_hidden = std::env::args().any(|arg| arg == BACKGROUND_ARG);
 
-    // Agent na macOS: vypnutý v nastavení, nebo hned po startu opakovaně
-    // padá → na tuto relaci se zastaví (launchd ho jinak spouští znovu).
     #[cfg(target_os = "macos")]
-    if start_hidden && let Some(data_dir) = agent::launchd::data_dir() {
-        let enabled = settings::Settings::load(&data_dir.join("settings.json")).launch_at_login;
-        if agent::launchd::startup_check(&data_dir, enabled).is_some() {
-            agent::launchd::stop_for_session();
-            return;
+    let duplicate = match agent::launchd::data_dir() {
+        Some(data_dir) => {
+            // Agent: vypnutý v nastavení, nebo hned po startu opakovaně padá
+            // → na tuto relaci se zastaví (launchd ho jinak spouští znovu).
+            if start_hidden {
+                let enabled =
+                    settings::Settings::load(&data_dir.join("settings.json")).launch_at_login;
+                if agent::launchd::startup_check(&data_dir, enabled).is_some() {
+                    agent::launchd::stop_for_session();
+                    return;
+                }
+            }
+            // Jen jedna instance: agent počká, až předchozí skončí; ruční
+            // spuštění po chvíli přenechá okno běžící instanci.
+            !instance::claim(&data_dir, start_hidden)
         }
-    }
+        None => false,
+    };
+    #[cfg(not(target_os = "macos"))]
+    let duplicate = false;
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -243,7 +255,14 @@ fn main() {
             Some(vec![BACKGROUND_ARG]),
         ))
         .setup(move |app| {
+            // Druhá instance, kterou plugin nezachytil (souběžný start): skončí
+            // dřív, než by spustila druhou ochranu.
+            if duplicate {
+                std::process::exit(0);
+            }
             let data_dir = app.path().app_data_dir()?;
+            // Restart z okna (např. po povolení přístupu) okno ukáže i agentovi.
+            let show_window = !start_hidden || services::take_window_request(&data_dir);
             let state = AppState::new(data_dir);
             state
                 .background_launch
@@ -260,16 +279,16 @@ fn main() {
             if let Err(err) = build_tray(app.handle()) {
                 eprintln!("tray: {err}");
             }
-            if start_hidden {
-                hide_main_window(app.handle());
-            } else {
+            if show_window {
                 show_main_window(app.handle());
+            } else {
+                hide_main_window(app.handle());
             }
             // Ochrana na pozadí podle nastavení (výchozí: zapnuto).
             let enabled = app.state::<AppState>().settings().launch_at_login;
             apply_background_setting(app.handle(), enabled);
             #[cfg(target_os = "macos")]
-            if !start_hidden {
+            if show_window {
                 // Agent se dřív zastavil po opakovaných pádech: říct to v rozhraní.
                 let paused = app.state::<AppState>().data_dir.join("agent-paused");
                 if std::fs::remove_file(&paused).is_ok()
@@ -335,6 +354,7 @@ fn main() {
             commands::privacy_report,
             commands::update_rules_now,
             commands::runtime_info,
+            commands::restart_app,
             commands::get_settings,
             commands::save_settings,
             commands::pick_watch_folder,

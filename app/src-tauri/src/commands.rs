@@ -289,6 +289,14 @@ pub fn runtime_info(state: State<'_, AppState>) -> RuntimeInfo {
     state.runtime_info()
 }
 
+/// Restart AntiShieldu: macOS použije nově povolený plný přístup k disku až
+/// v novém procesu. Nová instance ukáže okno, i když ji spustí agent na pozadí.
+#[tauri::command]
+pub fn restart_app(app: AppHandle, state: State<'_, AppState>) {
+    services::request_window_after_restart(&state.data_dir);
+    app.request_restart();
+}
+
 // ---------- Nastavení ----------
 
 #[tauri::command]

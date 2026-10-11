@@ -227,7 +227,12 @@ impl Engine {
             true,
         )?;
         if let Some(issue) = audit.integrity_issue().map(str::to_string) {
-            audit.append("audit_integrity_issue", json!({ "detail": issue }), true)?;
+            // Poškozený soubor je uzavřený, zápis pokračuje v novém (viz `AuditLog::open`).
+            audit.append(
+                "audit_integrity_issue",
+                json!({ "detail": issue, "sealed": true }),
+                true,
+            )?;
         }
 
         let keys = config
@@ -664,17 +669,12 @@ impl Engine {
                 reason: "quarantine storage is not writable".into(),
             }
         };
-        let integrity = self
-            .audit
-            .lock()
-            .ok()
-            .and_then(|log| log.integrity_issue().map(str::to_string));
+        // Problém s integritou z otevření je zapsaný v logu (`audit_integrity_issue`)
+        // a poškozený soubor uzavřený; zápis od té doby pokračuje v pořádku.
         let audit_state = if !self.audit_healthy.load(Ordering::SeqCst) {
             ComponentState::Failed {
                 reason: "audit log cannot be written".into(),
             }
-        } else if let Some(issue) = integrity {
-            ComponentState::Degraded { reason: issue }
         } else {
             ComponentState::Running {
                 verified_at_ms: self.loaded_at_ms,

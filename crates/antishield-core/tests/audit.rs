@@ -81,16 +81,54 @@ fn reordered_records_are_detected() {
 }
 
 #[test]
-fn truncated_last_record_is_reported_and_logging_continues() {
+fn truncated_last_record_is_reported_once_and_logging_continues() {
     let tmp = tempfile::tempdir().unwrap();
     let file = log_with_records(tmp.path(), 3);
     let mut text = fs::read_to_string(&file).unwrap();
     text.truncate(text.len() - 10);
     fs::write(&file, &text).unwrap();
+
     let mut log = AuditLog::open(tmp.path()).unwrap();
     assert!(log.integrity_issue().is_some());
-    log.append("after-crash", json!({}), true).unwrap();
+    // Poslední platný je záznam 2; zápis pokračuje v novém souboru.
+    assert_eq!(log.append("after-crash", json!({}), true).unwrap(), 3);
+    drop(log);
+    assert_eq!(
+        fs::read_to_string(&file).unwrap(),
+        text,
+        "the damaged file is kept as is"
+    );
+    assert!(tmp.path().join("audit-000002.jsonl").exists());
+
+    let reopened = AuditLog::open(tmp.path()).unwrap();
+    assert!(reopened.integrity_issue().is_none(), "reported only once");
     let report = verify_dir(tmp.path()).unwrap();
     assert!(!report.ok, "the damaged line must stay visible");
     assert_eq!(report.problems.len(), 1, "{report:?}");
+    assert_eq!(report.records, 3);
+}
+
+#[test]
+fn broken_chain_is_sealed_and_the_new_file_links_to_the_last_record() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = log_with_records(tmp.path(), 4);
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(&file, text.replacen("\"i\":1", "\"i\":9", 1)).unwrap();
+
+    let mut log = AuditLog::open(tmp.path()).unwrap();
+    let issue = log.integrity_issue().unwrap().to_string();
+    assert!(issue.contains("chain broken at seq 3"), "{issue}");
+    assert_eq!(log.append("next", json!({}), true).unwrap(), 5);
+    drop(log);
+
+    assert!(
+        AuditLog::open(tmp.path())
+            .unwrap()
+            .integrity_issue()
+            .is_none()
+    );
+    let report = verify_dir(tmp.path()).unwrap();
+    // Jen původní přetržení; nový soubor na řetěz navazuje.
+    assert_eq!(report.problems.len(), 1, "{report:?}");
+    assert_eq!(report.files, 2);
 }

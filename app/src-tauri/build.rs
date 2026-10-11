@@ -20,6 +20,7 @@ fn main() {
         "privacy_report",
         "update_rules_now",
         "runtime_info",
+        "restart_app",
         "get_settings",
         "save_settings",
         "pick_watch_folder",

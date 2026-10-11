@@ -94,6 +94,8 @@ pub struct RuntimeInfo {
     pub startup_watched: bool,
     pub programs_checked: u64,
     pub programs_since_ms: Option<u64>,
+    /// Plný přístup k disku (jen macOS; jinde `None`).
+    pub full_disk_access: Option<bool>,
 }
 
 pub struct AppState {
@@ -417,7 +419,9 @@ impl AppState {
     }
 
     pub fn runtime_info(&self) -> RuntimeInfo {
-        // Nastavení dřív než zámek ochrany (vždy stejné pořadí zámků).
+        // Kontrola přístupu (otevření souboru) a nastavení dřív než zámek
+        // ochrany (vždy stejné pořadí zámků).
+        let full_disk_access = antishield_core::privacy::full_disk_access();
         let chosen = self.settings().watch_paths();
         let runtime = lock(&self.protection);
         let watched: &[PathBuf] = runtime.watcher.as_ref().map_or(&[], |w| w.watched());
@@ -439,6 +443,7 @@ impl AppState {
             last_scheduled_run_ms: *lock(&self.last_scheduled_run_ms),
             background_problem: lock(&self.background_problem).clone(),
             last_catch_up: lock(&self.last_catch_up).clone(),
+            full_disk_access,
         }
     }
 }

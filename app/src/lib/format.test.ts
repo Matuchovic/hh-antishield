@@ -112,6 +112,20 @@ describe("texts", () => {
       describeAuditEvent({ ...base, data: { outcome: { type: "completed" }, filesScanned: 5, findings: 0 } }).detail,
     ).toMatch(/^[^:]+: 5 souborů, 0 nálezů$/);
   });
+
+  it("explains an audit integrity issue and whether it was sealed", () => {
+    const base = { seq: 1, tsMs: 0, kind: "audit_integrity_issue" };
+    const chain = describeAuditEvent({
+      ...base,
+      data: { detail: "audit-000001.jsonl: chain broken at seq 3", sealed: true },
+    });
+    expect(chain.title).toBe("Problém s integritou auditu");
+    expect(chain.detail).toBe("Záznamy na sebe nenavazují (souběžný zápis nebo úprava); uzavřeno, zápis pokračuje v novém souboru");
+    // Záznam ze starší verze (bez uzavření) netvrdí, že je soubor uzavřený.
+    expect(
+      describeAuditEvent({ ...base, data: { detail: "audit-000001.jsonl: the last record is truncated" } }).detail,
+    ).toBe("Useknutý zápis, nejspíš po nečekaném vypnutí");
+  });
 });
 
 describe("platformName", () => {

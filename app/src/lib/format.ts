@@ -320,6 +320,16 @@ const AUDIT_KINDS: Record<string, string> = {
   rule_pack_installed: "Nová sada pravidel nainstalována",
 };
 
+/** Problém s integritou auditu z technického popisu enginu. */
+function describeIntegrityIssue(detail: string, sealed: boolean): string {
+  const what = /chain broken|sequence jumps/.test(detail)
+    ? "záznamy na sebe nenavazují (souběžný zápis nebo úprava)"
+    : /truncated|not a valid record/.test(detail)
+      ? "useknutý zápis, nejspíš po nečekaném vypnutí"
+      : "část logu nejde přečíst";
+  return capitalize(sealed ? `${what}; uzavřeno, zápis pokračuje v novém souboru` : what);
+}
+
 export function describeAuditEvent(event: AuditEvent): { title: string; detail: string } {
   const title = AUDIT_KINDS[event.kind] ?? event.kind;
   const d = event.data;
@@ -358,6 +368,8 @@ export function describeAuditEvent(event: AuditEvent): { title: string; detail: 
       return { title, detail: String(d.message ?? "") };
     case "engine_started":
       return { title, detail: `verze ${String(d.engineVersion ?? "")}` };
+    case "audit_integrity_issue":
+      return { title, detail: describeIntegrityIssue(String(d.detail ?? ""), d.sealed === true) };
     default:
       return { title, detail: "" };
   }

@@ -279,6 +279,8 @@ export interface RuntimeInfo {
   startupWatched: boolean;
   programsChecked: number;
   programsSinceMs: number | null;
+  /** Plný přístup k disku (macOS); jinde null. */
+  fullDiskAccess: boolean | null;
 }
 
 export interface PrivacyGrant {

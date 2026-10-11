@@ -118,6 +118,8 @@ export function useAntiShield() {
       onAppEvent<boolean>("engine-ready", () => void refresh()),
       onAppEvent<unknown>("rules-updated", () => void refresh()),
       onAppEvent<unknown>("quarantine-changed", () => void refreshQuarantine()),
+      // Povolený nebo odebraný plný přístup k disku mění hlídané složky.
+      onAppEvent<boolean | null>("access-changed", () => void refresh()),
       onAppEvent<Detection>("protection-event", (detection) => {
         if (detection.action.type === "quarantined") playCleaned();
         else playThreat();
@@ -304,6 +306,7 @@ export function useAntiShield() {
     rulesBusy,
     error,
     refresh,
+    refreshStatus,
     pick,
     start,
     startPreset,
