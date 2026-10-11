@@ -12,13 +12,17 @@ use serde_json::json;
 
 use crate::audit::AuditLog;
 use crate::error::EngineError;
+use crate::inspect::{FileInspector, InspectResult};
 use crate::quarantine::{Quarantine, QuarantineItem};
 use crate::rules::{self, MAX_PACK_SIZE, MAX_SIGNATURE_FILE_SIZE, RulePack, TrustedKey};
 use crate::scan::{self, ScanContext, ScanHandle, ScanObserver};
 use crate::status::{
     ComponentKind, ComponentState, ComponentStatus, ProtectionSummary, summarize_protection,
 };
-use crate::types::{AuditEvent, EngineInfo, Finding, RulePackInfo, ScanRequest, SelfTestReport};
+use crate::types::{
+    AuditEvent, EngineInfo, Finding, FindingOrigin, RulePackInfo, ScanLimits, ScanRequest,
+    SelfTestReport,
+};
 use crate::{ENGINE_VERSION, now_ms, platform_label, selftest};
 
 /// Testovací sada pravidel zabudovaná do enginu (podepsaná, ověřuje se při načtení).
@@ -81,6 +85,18 @@ pub enum RuleUpdateOutcome {
     UpToDate { rule_pack: RulePackInfo },
 }
 
+/// Co se při vyčištění nálezu povedlo.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RemediationReport {
+    pub path: String,
+    pub quarantined: Option<QuarantineItem>,
+    pub process_terminated: bool,
+    pub startup_disabled: bool,
+    /// Kroky, které se nepovedly (srozumitelný kód chyby a text).
+    pub problems: Vec<String>,
+}
+
 #[derive(Debug)]
 pub struct Engine {
     rules: RwLock<ActiveRules>,
@@ -92,6 +108,45 @@ pub struct Engine {
     running: Arc<AtomicBool>,
     loaded_at_ms: u64,
     last_self_test: Mutex<Option<SelfTestReport>>,
+}
+
+/// Záznam pro karanténu doprovodného souboru (např. plist položky po spuštění).
+fn snapshot_finding(path: &Path, label: &str, cause: &Finding) -> Result<Finding, EngineError> {
+    use sha2::{Digest, Sha256};
+    let (mut file, meta) = match crate::platform::open_regular(path) {
+        Ok(opened) => opened,
+        Err(crate::platform::OpenError::NotRegular) => {
+            return Err(EngineError::FileChanged("not a regular file".into()));
+        }
+        Err(crate::platform::OpenError::Io(err)) => return Err(err.into()),
+    };
+    const MAX_COMPANION: u64 = 16 * 1024 * 1024;
+    let mut data = Vec::new();
+    (&mut file).take(MAX_COMPANION + 1).read_to_end(&mut data)?;
+    if data.len() as u64 > MAX_COMPANION {
+        return Err(EngineError::InvalidRequest(
+            "startup item file is too large".into(),
+        ));
+    }
+    Ok(Finding {
+        path: path.display().to_string(),
+        sha256: hex::encode(Sha256::digest(&data)),
+        rule_id: "STARTUP-ITEM".into(),
+        rule_name: if label.is_empty() {
+            "Položka po spuštění".into()
+        } else {
+            label.chars().take(200).collect()
+        },
+        rule_version: 1,
+        rule_description: format!("Spouštěla soubor zachycený pravidlem {}.", cause.rule_id),
+        severity: cause.severity,
+        test_only: cause.test_only,
+        evidence: Vec::new(),
+        identity: crate::platform::identity(&meta),
+        changed_during_read: false,
+        archive_entry: None,
+        origin: None,
+    })
 }
 
 fn now_unix() -> i64 {
@@ -398,6 +453,97 @@ impl Engine {
             ),
         }
         result
+    }
+
+    /// Zkontroluje jednotlivé soubory (hlídání složek). Nálezy zapíše do auditu.
+    pub fn inspect_paths(&self, paths: &[PathBuf]) -> Vec<(PathBuf, InspectResult)> {
+        let rules = self.rules();
+        let mut inspector = FileInspector::new(&rules, ScanLimits::default());
+        let mut results = Vec::with_capacity(paths.len());
+        for path in paths {
+            let result = inspector.inspect(path);
+            if let InspectResult::Scanned { findings, .. } = &result {
+                for finding in findings {
+                    self.audit(
+                        "finding",
+                        json!({
+                            "source": "watch",
+                            "path": finding.path,
+                            "sha256": finding.sha256,
+                            "ruleId": finding.rule_id,
+                            "testOnly": finding.test_only,
+                            "archiveEntry": finding.archive_entry,
+                        }),
+                        true,
+                    );
+                }
+            }
+            results.push((path.clone(), result));
+        }
+        results
+    }
+
+    /// Vyčistí nález: ukončí proces, přesune soubor do karantény a vypne
+    /// položku po spuštění, která ho spouštěla. Každý krok se zapíše do auditu.
+    pub fn remediate(&self, finding: &Finding) -> RemediationReport {
+        let mut report = RemediationReport {
+            path: finding.path.clone(),
+            ..RemediationReport::default()
+        };
+        if let Some(FindingOrigin::Process { pid, .. }) = &finding.origin {
+            match crate::system::terminate_process(*pid, Path::new(&finding.path)) {
+                Ok(terminated) => report.process_terminated = terminated,
+                Err(err) => report.problems.push(format!("{}: {err}", err.code())),
+            }
+        }
+        match self.quarantine_finding(finding) {
+            Ok(item) => report.quarantined = Some(item),
+            Err(err) => report.problems.push(format!("{}: {err}", err.code())),
+        }
+        if let Some(FindingOrigin::StartupItem { location, label }) = &finding.origin
+            && report.quarantined.is_some()
+        {
+            match self.disable_startup_item(location, label, finding) {
+                Ok(()) => report.startup_disabled = true,
+                Err(err) => report.problems.push(format!("{}: {err}", err.code())),
+            }
+        }
+        self.audit("remediated", json!(report), true);
+        report
+    }
+
+    /// Vypne položku po spuštění: soubor (plist, zástupce) přesune do karantény,
+    /// záznam v registru (Windows, jen HKCU) smaže.
+    fn disable_startup_item(
+        &self,
+        location: &str,
+        label: &str,
+        cause: &Finding,
+    ) -> Result<(), EngineError> {
+        let path = Path::new(location);
+        if path.is_absolute() {
+            if path == Path::new(&cause.path) {
+                return Ok(()); // Sama položka už je v karanténě.
+            }
+            if !crate::system::is_startup_location(path) {
+                return Err(EngineError::InvalidRequest(
+                    "not a startup item location".into(),
+                ));
+            }
+            let companion = snapshot_finding(path, label, cause)?;
+            self.quarantine_finding(&companion).map(|_| ())
+        } else {
+            #[cfg(windows)]
+            {
+                crate::system::remove_registry_startup(location)
+            }
+            #[cfg(not(windows))]
+            {
+                Err(EngineError::InvalidRequest(
+                    "unsupported startup item location".into(),
+                ))
+            }
+        }
     }
 
     pub fn quarantine_items(&self) -> Result<Vec<QuarantineItem>, EngineError> {

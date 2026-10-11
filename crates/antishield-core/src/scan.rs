@@ -7,7 +7,6 @@
 //! Engine soubory jen čte. Nic nemaže, nepřesouvá ani nespouští.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,12 +20,12 @@ use walkdir::WalkDir;
 
 use crate::audit::AuditLog;
 use crate::error::EngineError;
-use crate::matcher::ContentMatcher;
-use crate::platform::{self, OpenError};
+use crate::inspect::{CHUNK_SIZE, FileOutcome, Hooks, inspect_file};
+use crate::platform;
 use crate::rules::RulePack;
 use crate::types::{
-    Evidence, FileIdentity, Finding, ScanEvent, ScanLimits, ScanOutcome, ScanProgress, ScanRequest,
-    ScanSummary, Severity, SkipCount, SkipReason, SkippedItem,
+    Finding, FindingOrigin, ScanEvent, ScanLimits, ScanOutcome, ScanProgress, ScanRequest,
+    ScanSummary, SkipCount, SkipReason, SkippedItem,
 };
 use crate::{ENGINE_VERSION, now_ms};
 
@@ -70,7 +69,6 @@ pub(crate) struct ScanContext {
     pub running: Arc<AtomicBool>,
 }
 
-const CHUNK_SIZE: usize = 1024 * 1024;
 const QUEUE_CAPACITY: usize = 512;
 const TICK: Duration = Duration::from_millis(50);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -238,6 +236,7 @@ struct Shared {
     limits: ScanLimits,
     stay_on_volume: bool,
     rules: Arc<RulePack>,
+    origins: HashMap<PathBuf, FindingOrigin>,
 }
 
 impl Shared {
@@ -317,6 +316,7 @@ fn run_scan(
         limits: request.limits.clone(),
         stay_on_volume: request.stay_on_volume,
         rules: ctx.rules.clone(),
+        origins: request.origins.clone(),
     });
 
     let (work_tx, work_rx) = mpsc::sync_channel::<WorkItem>(QUEUE_CAPACITY);
@@ -701,16 +701,6 @@ fn send_work(shared: &Shared, tx: &SyncSender<WorkItem>, mut item: WorkItem) -> 
     }
 }
 
-enum FileOutcome {
-    Scanned {
-        findings: Vec<Finding>,
-        archive: bool,
-        yara_incomplete: bool,
-    },
-    Skipped(SkipReason),
-    Cancelled,
-}
-
 fn new_yara_scanner(shared: &Shared) -> Option<yara_x::Scanner<'_>> {
     shared.rules.yara().map(|rules| {
         let mut scanner = yara_x::Scanner::new(rules);
@@ -824,9 +814,6 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
     }
 }
 
-/// Obsah větší než tato mez se po kontrole uvolní, aby vlákno nedrželo paměť.
-const KEEP_CONTENT_CAPACITY: usize = 8 * 1024 * 1024;
-
 fn scan_file(
     shared: &Shared,
     path: &Path,
@@ -835,180 +822,25 @@ fn scan_file(
     yara: Option<&mut yara_x::Scanner<'_>>,
     slot: &Slot,
 ) -> FileOutcome {
-    let limits = &shared.limits;
-    let (mut file, meta) = match platform::open_regular(path) {
-        Ok(opened) => opened,
-        Err(OpenError::NotRegular) => return FileOutcome::Skipped(SkipReason::NotRegularFile),
-        Err(OpenError::Io(err)) => return FileOutcome::Skipped(platform::classify_io_error(&err)),
-    };
-    let before = platform::identity(&meta);
-    if before.size > limits.max_file_size_bytes {
-        return FileOutcome::Skipped(SkipReason::TooLarge {
-            size: before.size,
-            limit: limits.max_file_size_bytes,
-        });
-    }
-
-    // YARA potřebuje celý obsah; soubory do limitu se drží v paměti.
-    let mut collect = yara.is_some() && before.size <= limits.max_yara_file_bytes;
-    content.clear();
-    let mut matcher = ContentMatcher::new(&shared.rules);
-    loop {
-        if shared.stopped() {
-            return FileOutcome::Cancelled;
+    let stopped = || shared.stopped();
+    let progress = |read: u64| {
+        if read > 0 {
+            shared.bytes.fetch_add(read, Ordering::Relaxed);
         }
-        let read = match file.read(buffer) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(err) => return FileOutcome::Skipped(platform::classify_io_error(&err)),
-        };
-        matcher.feed(&buffer[..read]);
-        if collect {
-            if (content.len() + read) as u64 <= limits.max_yara_file_bytes {
-                content.extend_from_slice(&buffer[..read]);
-            } else {
-                collect = false;
-            }
-        }
-        shared.bytes.fetch_add(read as u64, Ordering::Relaxed);
         slot.last_progress_ms
             .store(shared.now_ms(), Ordering::SeqCst);
-        if matcher.bytes_seen() > limits.max_file_size_bytes {
-            return FileOutcome::Skipped(SkipReason::TooLarge {
-                size: matcher.bytes_seen(),
-                limit: limits.max_file_size_bytes,
-            });
-        }
-    }
-
-    let after = file.metadata().ok().map(|m| platform::identity(&m));
-    let changed = matcher.bytes_seen() != before.size
-        || after.is_none_or(|after| !platform::same_version(&before, &after));
-    let verdict = matcher.finish();
-    let sha256 = hex::encode(verdict.sha256);
-    let display = path.display().to_string();
-    let mut findings: Vec<Finding> = verdict
-        .matches
-        .iter()
-        .map(|m| {
-            let rule = shared.rules.rule(m.rule_index);
-            Finding {
-                path: display.clone(),
-                sha256: sha256.clone(),
-                rule_id: rule.id.clone(),
-                rule_name: rule.name.clone(),
-                rule_version: rule.version,
-                rule_description: rule.description.cs.clone(),
-                severity: rule.severity,
-                test_only: rule.test_only,
-                evidence: vec![m.evidence.clone()],
-                identity: before,
-                changed_during_read: changed,
-            }
-        })
-        .collect();
-
-    let mut yara_incomplete = false;
-    if let Some(scanner) = yara {
-        if shared.stopped() {
-            return FileOutcome::Cancelled;
-        }
-        if collect && content.len() as u64 == verdict.size {
-            slot.last_progress_ms
-                .store(shared.now_ms(), Ordering::SeqCst);
-            match scanner.scan(content) {
-                Ok(results) => {
-                    for rule in results.matching_rules() {
-                        findings.push(yara_finding(
-                            &shared.rules,
-                            &rule,
-                            &display,
-                            &sha256,
-                            before,
-                            changed,
-                        ));
-                    }
-                }
-                // Vypršený čas nebo chyba: soubor prošel jen otisky a vzory.
-                Err(_) => yara_incomplete = true,
-            }
-        } else {
-            yara_incomplete = true;
-        }
-    }
-    if content.capacity() > KEEP_CONTENT_CAPACITY {
-        *content = Vec::new();
-    }
-    FileOutcome::Scanned {
-        findings,
-        archive: verdict.archive.is_some(),
-        yara_incomplete,
-    }
-}
-
-const MAX_META_LEN: usize = 300;
-
-fn meta_text(value: &str) -> String {
-    value.chars().take(MAX_META_LEN).collect()
-}
-
-/// Nález z pravidla YARA. Závažnost vychází z metadat `score` (0–100);
-/// pravidla s `hh_test_only = true` jsou jen testovací.
-fn yara_finding(
-    pack: &RulePack,
-    rule: &yara_x::Rule<'_, '_>,
-    path: &str,
-    sha256: &str,
-    identity: FileIdentity,
-    changed: bool,
-) -> Finding {
-    use yara_x::MetaValue;
-    let mut description = None;
-    let mut author = None;
-    let mut reference = None;
-    let mut score = None;
-    let mut test_marker = false;
-    for (key, value) in rule.metadata() {
-        match (key, value) {
-            ("description", MetaValue::String(text)) => description = Some(meta_text(text)),
-            ("author", MetaValue::String(text)) => author = Some(meta_text(text)),
-            ("reference", MetaValue::String(text)) => reference = Some(meta_text(text)),
-            ("score", MetaValue::Integer(value)) => score = Some(value),
-            ("hh_test_only", MetaValue::Bool(true)) => test_marker = true,
-            _ => {}
-        }
-    }
-    let test_only = test_marker || pack.info().test_pack;
-    let severity = if test_only {
-        Severity::TestOnly
-    } else {
-        match score {
-            Some(s) if s >= 80 => Severity::High,
-            Some(s) if s >= 60 => Severity::Medium,
-            Some(_) => Severity::Low,
-            None => Severity::Medium,
-        }
     };
-    let namespace = rule.namespace().to_string();
-    let identifier = rule.identifier().to_string();
-    Finding {
-        path: path.to_string(),
-        sha256: sha256.to_string(),
-        rule_id: format!("YARA:{namespace}:{identifier}"),
-        rule_name: identifier.clone(),
-        rule_version: 1,
-        rule_description: description
-            .unwrap_or_else(|| "Soubor odpovídá pravidlu YARA.".to_string()),
-        severity,
-        test_only,
-        evidence: vec![Evidence::YaraMatch {
-            source: namespace,
-            rule: identifier,
-            author,
-            reference,
-        }],
-        identity,
-        changed_during_read: changed,
-    }
+    inspect_file(
+        &shared.rules,
+        &shared.limits,
+        path,
+        shared.origins.get(path),
+        buffer,
+        content,
+        yara,
+        &Hooks {
+            stopped: &stopped,
+            progress: &progress,
+        },
+    )
 }

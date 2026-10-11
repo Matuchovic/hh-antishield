@@ -16,18 +16,23 @@
 pub mod audit;
 pub mod engine;
 pub mod error;
+pub mod inspect;
 pub mod matcher;
 mod platform;
+pub mod posture;
 pub mod quarantine;
 pub mod rules;
 pub mod scan;
 pub mod selftest;
 pub mod status;
+pub mod system;
 pub mod testvectors;
 pub mod types;
+pub mod watch;
 
-pub use engine::{Engine, EngineConfig, RuleSource, RuleUpdateOutcome};
+pub use engine::{Engine, EngineConfig, RemediationReport, RuleSource, RuleUpdateOutcome};
 pub use error::EngineError;
+pub use inspect::InspectResult;
 pub use quarantine::QuarantineItem;
 pub use scan::{ScanHandle, ScanObserver};
 pub use types::*;

@@ -474,3 +474,96 @@ fn files_over_the_yara_limit_are_counted_not_hidden() {
     assert!(summary.findings.is_empty());
     assert_eq!(summary.yara_incomplete, 1);
 }
+
+fn zip_bytes(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    cursor.into_inner()
+}
+
+#[test]
+fn zip_contents_are_inspected_with_limits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("data");
+    write(
+        &root.join("bundle.zip"),
+        &zip_bytes(&[
+            ("inner/eicar.com", eicar()),
+            ("readme.txt", b"clean".to_vec()),
+        ]),
+    );
+    // 8 MiB nul se zabalí na pár kB: poměr komprese je nad limitem.
+    write(
+        &root.join("bomb.zip"),
+        &zip_bytes(&[("zeros.bin", vec![0u8; 8 * 1024 * 1024])]),
+    );
+    let nested = zip_bytes(&[("eicar.com", eicar())]);
+    write(
+        &root.join("nested.zip"),
+        &zip_bytes(&[("inner.zip", nested)]),
+    );
+    let engine = engine(&tmp.path().join("state"));
+    let (_, summary) = scan(&engine, request(&root));
+
+    let hits: Vec<_> = summary
+        .findings
+        .iter()
+        .filter(|f| f.path.ends_with("bundle.zip"))
+        .collect();
+    assert!(!hits.is_empty());
+    assert!(
+        hits.iter()
+            .all(|f| f.archive_entry.as_deref() == Some("inner/eicar.com"))
+    );
+    // Vnořený archiv se nerozbaluje a bomba se nečte celá: obojí je přiznané.
+    assert!(
+        summary
+            .findings
+            .iter()
+            .all(|f| !f.path.ends_with("nested.zip"))
+    );
+    assert_eq!(summary.archives_not_inspected, 2);
+}
+
+#[test]
+fn single_files_can_be_inspected_outside_a_scan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = engine(&tmp.path().join("state"));
+    let bad = tmp.path().join("eicar.com");
+    let good = tmp.path().join("clean.txt");
+    write(&bad, &eicar());
+    write(&good, b"clean");
+    let results = engine.inspect_paths(&[bad.clone(), good.clone(), tmp.path().join("missing")]);
+    assert_eq!(results.len(), 3);
+    match &results[0].1 {
+        antishield_core::InspectResult::Scanned { findings, complete } => {
+            assert!(!findings.is_empty());
+            assert!(complete);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        matches!(&results[1].1, antishield_core::InspectResult::Scanned { findings, .. } if findings.is_empty())
+    );
+    assert!(matches!(
+        &results[2].1,
+        antishield_core::InspectResult::Skipped(_)
+    ));
+    let report = engine.remediate(match &results[0].1 {
+        antishield_core::InspectResult::Scanned { findings, .. } => &findings[0],
+        _ => unreachable!(),
+    });
+    assert!(report.quarantined.is_some(), "{report:?}");
+    assert!(report.problems.is_empty(), "{report:?}");
+    assert!(!bad.exists());
+}

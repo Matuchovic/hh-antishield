@@ -1,6 +1,7 @@
 //! Veřejné datové typy. Jsou to čistá data bez ukazatelů, takže je jde poslat
 //! přes IPC (Tauri) nebo později přes XPC beze změny.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,8 @@ pub struct ScanRequest {
     /// Nepřecházet na jiné svazky pod kořenem.
     pub stay_on_volume: bool,
     pub limits: ScanLimits,
+    /// Odkud cíl pochází (proces, položka po spuštění). Klíčem je kanonická cesta souboru.
+    pub origins: HashMap<PathBuf, FindingOrigin>,
 }
 
 impl ScanRequest {
@@ -54,8 +57,21 @@ impl ScanRequest {
             roots,
             stay_on_volume: true,
             limits: ScanLimits::default(),
+            origins: HashMap::new(),
         }
     }
+}
+
+/// Souvislost nálezu: běžící proces nebo položka spouštěná po přihlášení.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FindingOrigin {
+    Process { pid: u32, name: String },
+    StartupItem { location: String, label: String },
 }
 
 /// Závažnost pravidla.
@@ -128,6 +144,9 @@ pub struct Finding {
     pub identity: FileIdentity,
     /// Soubor se během čtení změnil, nález nemusí odpovídat aktuálnímu obsahu.
     pub changed_during_read: bool,
+    /// Cesta uvnitř archivu, pokud nález pochází z jeho obsahu.
+    pub archive_entry: Option<String>,
+    pub origin: Option<FindingOrigin>,
 }
 
 /// Proč položka nebyla zkontrolována.
