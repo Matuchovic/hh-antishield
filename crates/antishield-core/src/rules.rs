@@ -13,16 +13,19 @@ use serde::Deserialize;
 
 use crate::ENGINE_VERSION;
 use crate::error::EngineError;
-use crate::types::{RulePackInfo, Severity};
+use crate::types::{RulePackInfo, RuleSourceInfo, Severity};
 
-pub const MAX_PACK_SIZE: usize = 16 * 1024 * 1024;
+pub const MAX_PACK_SIZE: usize = 64 * 1024 * 1024;
 pub const MAX_SIGNATURE_FILE_SIZE: usize = 4 * 1024;
-pub const FORMAT_VERSION: u32 = 1;
+/// Formát 2 přidává zdroje pravidel YARA; formát 1 se dál načte.
+pub const FORMAT_VERSION: u32 = 2;
 pub const MIN_PATTERN_LEN: usize = 8;
 pub const MAX_PATTERN_LEN: usize = 1024;
 pub const MAX_RULES: usize = 100_000;
 const MAX_ID_LEN: usize = 64;
 const MAX_TEXT_LEN: usize = 2_000;
+const MAX_YARA_SOURCES: usize = 256;
+const MAX_LICENSE_LEN: usize = 64;
 
 /// SHA-256 prázdného souboru; jako indikátor by označil každý prázdný soubor.
 const EMPTY_FILE_SHA256: [u8; 32] = [
@@ -33,6 +36,10 @@ const EMPTY_FILE_SHA256: [u8; 32] = [
 /// Testovací klíč pro v0.1. Smí podepsat jen sadu s `test_pack: true`.
 pub const TEST_KEY_ID: &str = "hh-test-2026-10";
 const TEST_PUBLIC_KEY_HEX: &str = include_str!("../../../rules/keys/hh-test-2026-10.pub.hex");
+
+/// Produkční klíč pro sady pravidel z automatického sestavení (GitHub Actions).
+pub const PROD_KEY_ID: &str = "hh-rules-2026-10";
+const PROD_PUBLIC_KEY_HEX: &str = include_str!("../../../rules/keys/hh-rules-2026-10.pub.hex");
 
 /// Veřejný klíč, kterému engine věří.
 #[derive(Debug, Clone)]
@@ -51,6 +58,13 @@ pub fn builtin_trusted_keys() -> Vec<TrustedKey> {
             key_id: TEST_KEY_ID.to_string(),
             public_key,
             test_only: true,
+        });
+    }
+    if let Some(public_key) = decode_key_hex(PROD_PUBLIC_KEY_HEX) {
+        keys.push(TrustedKey {
+            key_id: PROD_KEY_ID.to_string(),
+            public_key,
+            test_only: false,
         });
     }
     keys
@@ -89,6 +103,21 @@ struct PackFile {
     min_engine_version: String,
     test_pack: bool,
     rules: Vec<RuleDef>,
+    #[serde(default)]
+    yara: Vec<YaraSourceDef>,
+}
+
+/// Zdroj pravidel YARA: jeden repozitář s jednou licencí.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct YaraSourceDef {
+    /// Jmenný prostor pravidel: malá písmena, číslice, `_`.
+    id: String,
+    name: String,
+    url: String,
+    /// Identifikátor licence (SPDX nebo např. `DRL-1.1`).
+    license: String,
+    source: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -135,6 +164,7 @@ pub struct RulePack {
     pattern_bytes: Vec<Vec<u8>>,
     max_pattern_len: usize,
     eicar_rule: Option<usize>,
+    yara: Option<yara_x::Rules>,
 }
 
 impl fmt::Debug for RulePack {
@@ -145,6 +175,7 @@ impl fmt::Debug for RulePack {
             .field("hash_rules", &self.hash_index.len())
             .field("pattern_rules", &self.pattern_rules.len())
             .field("eicar_rule", &self.eicar_rule)
+            .field("yara_rules", &self.info.yara_rule_count)
             .finish()
     }
 }
@@ -199,7 +230,7 @@ impl RulePack {
 
     fn compile(file: PackFile, key: &TrustedKey, now_unix: i64) -> Result<Self, EngineError> {
         let bad = |msg: String| EngineError::RulePackMalformed(msg);
-        if file.format_version != FORMAT_VERSION {
+        if !(1..=FORMAT_VERSION).contains(&file.format_version) {
             return Err(bad(format!(
                 "unsupported format_version {}",
                 file.format_version
@@ -312,16 +343,22 @@ impl RulePack {
             )
         };
 
+        let (yara, sources) = compile_yara(&file.yara)?;
+        let yara_rule_count: u32 = sources.iter().map(|s| s.rule_count).sum();
         let info = RulePackInfo {
             pack_id: file.pack_id,
             version: file.version,
             sequence: file.sequence,
-            rule_count: u32::try_from(rules.len()).unwrap_or(u32::MAX),
+            rule_count: u32::try_from(rules.len())
+                .unwrap_or(u32::MAX)
+                .saturating_add(yara_rule_count),
             signing_key_id: key.key_id.clone(),
             test_pack: file.test_pack,
             created_at_unix: file.created_at_unix,
             expires_at_unix: file.expires_at_unix,
             expired: now_unix > file.expires_at_unix,
+            yara_rule_count,
+            sources,
         };
 
         Ok(Self {
@@ -333,6 +370,7 @@ impl RulePack {
             pattern_bytes,
             max_pattern_len,
             eicar_rule,
+            yara,
         })
     }
 
@@ -374,6 +412,74 @@ impl RulePack {
 
     pub fn eicar_rule(&self) -> Option<usize> {
         self.eicar_rule
+    }
+
+    /// Zkompilovaná pravidla YARA, pokud je sada obsahuje.
+    pub fn yara(&self) -> Option<&yara_x::Rules> {
+        self.yara.as_ref()
+    }
+}
+
+/// Zkompiluje zdroje YARA; každý zdroj má vlastní jmenný prostor.
+/// Chyba v jediném pravidle odmítne celou sadu (sestavení je má vyřadit předem).
+fn compile_yara(
+    defs: &[YaraSourceDef],
+) -> Result<(Option<yara_x::Rules>, Vec<RuleSourceInfo>), EngineError> {
+    let bad = |msg: String| EngineError::RulePackMalformed(msg);
+    if defs.is_empty() {
+        return Ok((None, Vec::new()));
+    }
+    if defs.len() > MAX_YARA_SOURCES {
+        return Err(bad(format!("at most {MAX_YARA_SOURCES} yara sources")));
+    }
+    let mut compiler = yara_x::Compiler::new();
+    let mut seen = HashSet::new();
+    for def in defs {
+        check_namespace(&def.id)?;
+        if !seen.insert(def.id.as_str()) {
+            return Err(bad(format!("duplicate yara source {}", def.id)));
+        }
+        check_text("yara.name", &def.name, 200)?;
+        check_text("yara.license", &def.license, MAX_LICENSE_LEN)?;
+        if !def.url.starts_with("https://") || def.url.len() > 500 {
+            return Err(bad(format!("{}: url must be https", def.id)));
+        }
+        compiler.new_namespace(&def.id);
+        compiler
+            .add_source(def.source.as_str())
+            .map_err(|e| bad(format!("yara source {}: {e}", def.id)))?;
+    }
+    let rules = compiler.build();
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    for rule in rules.iter() {
+        *counts.entry(rule.namespace()).or_insert(0) += 1;
+    }
+    let sources = defs
+        .iter()
+        .map(|def| RuleSourceInfo {
+            id: def.id.clone(),
+            name: def.name.clone(),
+            url: def.url.clone(),
+            license: def.license.clone(),
+            rule_count: counts.get(def.id.as_str()).copied().unwrap_or(0),
+        })
+        .collect();
+    Ok((Some(rules), sources))
+}
+
+fn check_namespace(id: &str) -> Result<(), EngineError> {
+    let ok = !id.is_empty()
+        && id.len() <= MAX_ID_LEN
+        && id.as_bytes()[0].is_ascii_lowercase()
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if ok {
+        Ok(())
+    } else {
+        Err(EngineError::RulePackMalformed(format!(
+            "yara source id {id:?} must be a-z, 0-9 or '_' and start with a letter"
+        )))
     }
 }
 
