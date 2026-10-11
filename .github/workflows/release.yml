@@ -34,6 +34,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Klíč pro podpis aktualizací
+        shell: bash
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] || [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "::error::Chybí GitHub Secrets TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            exit 1
+          fi
       - run: rustup show active-toolchain || rustup toolchain install
       - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
       - uses: actions/setup-node@v5
@@ -72,6 +79,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Klíč pro podpis aktualizací
+        shell: bash
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] || [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "::error::Chybí GitHub Secrets TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            exit 1
+          fi
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: actions/setup-node@v5
         with:
