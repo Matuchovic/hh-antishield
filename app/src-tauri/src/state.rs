@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antishield_core::error::ErrorDto;
@@ -86,6 +87,8 @@ pub struct RuntimeInfo {
     pub detections: Vec<Detection>,
     pub rules: RulesStatus,
     pub last_scheduled_run_ms: Option<u64>,
+    pub background_problem: Option<String>,
+    pub last_catch_up: Option<CatchUp>,
 }
 
 pub struct AppState {
@@ -100,6 +103,23 @@ pub struct AppState {
     pub protection: Mutex<ProtectionRuntime>,
     detections: Mutex<VecDeque<Detection>>,
     pub last_scheduled_run_ms: Mutex<Option<u64>>,
+    /// Aplikace běží jako agent na pozadí (spustil ji launchd / přihlášení).
+    pub background_launch: AtomicBool,
+    /// Uživatel ochranu z lišty vědomě vypnul (agent se nemá obnovit).
+    pub explicit_quit: AtomicBool,
+    /// Proč ochrana na pozadí neběží (např. aplikace není v Aplikacích).
+    pub background_problem: Mutex<Option<String>>,
+    pub last_catch_up: Mutex<Option<CatchUp>>,
+}
+
+/// Kontrola souborů, které přibyly, když ochrana neběžela.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatchUp {
+    pub at_ms: u64,
+    pub since_ms: u64,
+    pub checked: usize,
+    pub complete: bool,
 }
 
 pub fn now_ms() -> u64 {
@@ -121,6 +141,10 @@ impl AppState {
             protection: Mutex::new(ProtectionRuntime::default()),
             detections: Mutex::new(VecDeque::new()),
             last_scheduled_run_ms: Mutex::new(None),
+            background_launch: AtomicBool::new(false),
+            explicit_quit: AtomicBool::new(false),
+            background_problem: Mutex::new(None),
+            last_catch_up: Mutex::new(None),
         }
     }
 
@@ -338,6 +362,8 @@ impl AppState {
             detections: lock(&self.detections).iter().cloned().collect(),
             rules: lock(&self.rules_status).clone(),
             last_scheduled_run_ms: *lock(&self.last_scheduled_run_ms),
+            background_problem: lock(&self.background_problem).clone(),
+            last_catch_up: lock(&self.last_catch_up).clone(),
         }
     }
 }

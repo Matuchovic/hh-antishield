@@ -1,7 +1,7 @@
 import { Icon } from "../components/Icon";
 import type { Screen } from "../components/Sidebar";
 import { Toggle } from "../components/Toggle";
-import { describeState, displayPath, formatDateTime, stateTone } from "../lib/format";
+import { describeState, displayPath, formatCount, formatDateTime, stateTone } from "../lib/format";
 import type { DetectionAction } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
 
@@ -25,9 +25,9 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
     <div className="screen">
       <h1>Ochrana v reálném čase</h1>
       <p className="lede">
-        AntiShield hlídá vybrané složky. Každý nový nebo změněný soubor zkontroluje během pár sekund a
-        škodlivý hned přesune do karantény, obvykle dřív, než ho stihnete otevřít. Spouštění programů
-        mimo hlídané složky zatím neblokuje.
+        AntiShield hlídá vybrané složky na pozadí, i když je okno zavřené. Každý nový nebo změněný
+        soubor zkontroluje během pár sekund a škodlivý hned přesune do karantény. Co přibude, když
+        AntiShield neběží, zkontroluje hned po spuštění. Spouštění programů zatím neblokuje.
       </p>
 
       <section className={`panel protection-state tone-${realtime ? stateTone(realtime) : "off"}`}>
@@ -37,6 +37,14 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
           </h2>
           {runtime?.watchingSinceMs ? <span className="muted">od {formatDateTime(runtime.watchingSinceMs)}</span> : null}
         </div>
+        {runtime?.lastCatchUp ? (
+          <p className="muted">
+            Po spuštění zkontrolováno{" "}
+            {formatCount(runtime.lastCatchUp.checked, "soubor", "soubory", "souborů")} změněných od{" "}
+            {formatDateTime(runtime.lastCatchUp.sinceMs)}
+            {runtime.lastCatchUp.complete ? "." : " (jen část – složky jsou velmi rozsáhlé)."}
+          </p>
+        ) : null}
         {settings ? (
           <div className="toggle-list">
             <Toggle

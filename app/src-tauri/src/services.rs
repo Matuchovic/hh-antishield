@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::{PresetScan, Schedule};
-use crate::state::{AppState, Detection, DetectionAction, folder_readable, now_ms};
+use crate::state::{AppState, CatchUp, Detection, DetectionAction, folder_readable, now_ms};
 
 const RULES_BASE: &str = "https://github.com/Matuchovic/hh-antishield/releases/download/rules";
 const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
@@ -243,6 +243,65 @@ pub fn apply_protection(app: &AppHandle) {
     }
 }
 
+/// Kdy naposledy běžela ochrana (soubor v datech aplikace, ms od epochy).
+const HEARTBEAT_FILE: &str = "protection-heartbeat";
+/// Rezerva: soubory zapsané těsně před ukončením se zkontrolují znovu.
+const HEARTBEAT_MARGIN_MS: u64 = 5 * 60 * 1000;
+/// Bez záznamu (první spuštění) se kontroluje poslední den.
+const FIRST_RUN_LOOKBACK_MS: u64 = 24 * 60 * 60 * 1000;
+const CATCH_UP_MAX_FILES: usize = 5_000;
+const CATCH_UP_MAX_VISITED: usize = 200_000;
+
+/// Zapíše, že ochrana právě běží (volá se pravidelně a při ukončení).
+pub fn record_heartbeat(state: &AppState) {
+    if state.settings().protection_enabled {
+        let _ = std::fs::write(state.data_dir.join(HEARTBEAT_FILE), now_ms().to_string());
+    }
+}
+
+/// Od kdy dohnat kontrolu: od posledního běhu ochrany (s rezervou), poprvé den zpět.
+fn catch_up_since(heartbeat: Option<u64>, now: u64) -> u64 {
+    heartbeat.map_or_else(
+        || now.saturating_sub(FIRST_RUN_LOOKBACK_MS),
+        |last| last.saturating_sub(HEARTBEAT_MARGIN_MS),
+    )
+}
+
+/// Po spuštění zkontroluje soubory, které v hlídaných složkách přibyly nebo se
+/// změnily, když ochrana neběžela; nálezy se řeší stejně jako při hlídání.
+pub fn catch_up(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let settings = state.settings();
+    if !settings.protection_enabled || state.engine().is_err() {
+        return;
+    }
+    let now = now_ms();
+    let heartbeat = std::fs::read_to_string(state.data_dir.join(HEARTBEAT_FILE))
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    let since = catch_up_since(heartbeat, now);
+    let found = antishield_core::watch::changed_since(
+        &settings.watch_paths(),
+        std::slice::from_ref(&state.data_dir),
+        since,
+        CATCH_UP_MAX_FILES,
+        CATCH_UP_MAX_VISITED,
+    );
+    let checked = found.files.len();
+    for batch in found.files.chunks(64) {
+        on_new_files(app, batch.to_vec());
+    }
+    if let Ok(mut last) = state.last_catch_up.lock() {
+        *last = Some(CatchUp {
+            at_ms: now,
+            since_ms: since,
+            checked,
+            complete: found.complete,
+        });
+    }
+    record_heartbeat(&state);
+}
+
 fn file_name(path: &str) -> String {
     std::path::Path::new(path)
         .file_name()
@@ -368,6 +427,7 @@ pub fn start_scheduler(app: AppHandle) {
             }
             loop {
                 std::thread::sleep(SCHEDULER_TICK);
+                record_heartbeat(&state);
                 let settings = state.settings();
                 let Some(due) = last_due_ms(
                     settings.schedule,
@@ -396,7 +456,7 @@ pub fn start_scheduler(app: AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::last_due_at;
+    use super::{FIRST_RUN_LOOKBACK_MS, HEARTBEAT_MARGIN_MS, catch_up_since, last_due_at};
     use crate::settings::Schedule;
     use chrono::{TimeZone, Utc};
 
@@ -442,5 +502,13 @@ mod tests {
     #[test]
     fn disabled_schedule_is_never_due() {
         assert_eq!(last_due_at(&at(14, 13), Schedule::Off, 12, 3), None);
+    }
+
+    #[test]
+    fn catch_up_starts_where_protection_stopped() {
+        let now = 1_800_000_000_000;
+        let last = now - 3_600_000;
+        assert_eq!(catch_up_since(Some(last), now), last - HEARTBEAT_MARGIN_MS);
+        assert_eq!(catch_up_since(None, now), now - FIRST_RUN_LOOKBACK_MS);
     }
 }

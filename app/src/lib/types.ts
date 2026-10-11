@@ -274,6 +274,15 @@ export interface RuntimeInfo {
   detections: Detection[];
   rules: RulesStatus;
   lastScheduledRunMs: number | null;
+  backgroundProblem: string | null;
+  lastCatchUp: CatchUp | null;
+}
+
+export interface CatchUp {
+  atMs: number;
+  sinceMs: number;
+  checked: number;
+  complete: boolean;
 }
 
 export type RuleUpdateOutcome =

@@ -1,6 +1,6 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.2.1)
+Aktualizováno: 2026-10-11 (v0.2.2)
 
 ## Stav
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
@@ -9,6 +9,10 @@ Aktualizováno: 2026-10-11 (v0.2.1)
   enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
   Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
   0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.2.2: ochrana běží na pozadí i po zavření/ukončení aplikace (macOS
+  LaunchAgent s KeepAlive, vypnutí jen z lišty s potvrzením, ochrana proti
+  smyčce pádů) a po spuštění dožene kontrolu souborů, které přibyly, když
+  neběžela.
 - v0.2: YARA-X a produkční pravidla
   z YARA Forge, ZIP, hlídání složek v reálném čase, karanténa a vyčištění
   (proces, položka po přihlášení), rychlá/úplná/plánovaná kontrola, bezpečnost
@@ -30,6 +34,10 @@ Aktualizováno: 2026-10-11 (v0.2.1)
 - Tauri, jedna aplikace pro macOS a Windows; distribuce mimo App Store.
 - Samostatný projekt: žádný vliv na hhsecurity a hhcloud.
 - Aktualizace aplikace přes banner (GitHub Releases), App Sandbox vypnutý.
+- Ochrana na pozadí na macOS: vlastní LaunchAgent `cz.hh.antishield.agent`
+  (RunAtLoad, KeepAlive, ThrottleInterval 10 s) místo pluginu autostart;
+  jen pro aplikaci nainstalovanou v Aplikacích. Na Windows dál plugin
+  (spuštění po přihlášení, bez obnovy po ukončení).
 - Tvrzené prostředí (hardened runtime) zapnuté s jedinou výjimkou
   `com.apple.security.cs.allow-unsigned-executable-memory` pro JIT ve
   wasmtime (YARA-X); Release spouští self-test z podepsaného balíčku.
@@ -40,7 +48,7 @@ Aktualizováno: 2026-10-11 (v0.2.1)
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
 ## Testy (2026-10-11, lokálně)
-- Rust: 74 testů (jádro 65, CLI 4, aplikace 5), clippy `-D warnings`,
+- Rust: 79 testů (jádro 66, CLI 4, aplikace 9), clippy `-D warnings`,
   rustfmt; self-test aplikace `--self-test` prošel.
 - Produkční řetězec pravidel lokálně: build → podpis produkčním klíčem →
   verify → self-test → nález pravidlem z Forge. Odhalil chybu: `rules sign`

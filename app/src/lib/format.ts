@@ -49,6 +49,11 @@ const REASONS: Record<string, string> = {
   "folder watching is starting": "hlídání se spouští",
   "no watched folder exists": "žádná hlídaná složka neexistuje",
   "no access to files in a watched folder": "systém nedovolil číst soubory v hlídané složce",
+  "app is not installed in Applications":
+    "ochrana na pozadí potřebuje aplikaci ve složce Aplikace; přetáhněte ji tam z DMG a spusťte odtud",
+  "not running from an app bundle": "ochrana na pozadí funguje jen v nainstalované aplikaci",
+  "background protection stopped after repeated crashes":
+    "ochrana na pozadí se po opakovaných pádech zastavila; po zavření aplikace se zkusí spustit znovu",
   "rule updates have not run yet": "aktualizace pravidel ještě neproběhla",
   "rule updates are not published yet": "aktualizace pravidel zatím nejsou zveřejněné",
   "the engine is still starting": "engine se spouští",
@@ -57,6 +62,11 @@ const REASONS: Record<string, string> = {
 
 export function translateReason(reason: string): string {
   return REASONS[reason] ?? reason;
+}
+
+/** První písmeno velké (důvody jsou psané jako pokračování věty). */
+export function capitalize(text: string): string {
+  return text.charAt(0).toLocaleUpperCase("cs-CZ") + text.slice(1);
 }
 
 export function formatTime(ms: number): string {

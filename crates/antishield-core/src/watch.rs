@@ -34,6 +34,80 @@ fn is_hidden_system_file(path: &Path) -> bool {
         .is_some_and(|n| n == ".DS_Store" || n.starts_with("._") || n.starts_with(".antishield-"))
 }
 
+/// Kdy se soubor naposledy změnil nebo přibyl (ms od epochy): nejnovější
+/// z času úpravy, vytvoření a (na Unixu) změny záznamu. Přesunutý nebo
+/// zkopírovaný soubor si nese starý čas úpravy, ale nový čas změny/vytvoření.
+fn changed_at_ms(meta: &std::fs::Metadata) -> u64 {
+    let to_ms = |time: std::time::SystemTime| {
+        time.duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0)
+    };
+    let mut latest = meta.modified().map(to_ms).unwrap_or(0);
+    if let Ok(created) = meta.created() {
+        latest = latest.max(to_ms(created));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(secs) = u64::try_from(meta.ctime()) {
+            let nanos = u64::try_from(meta.ctime_nsec()).unwrap_or(0);
+            latest = latest.max(secs.saturating_mul(1000) + nanos / 1_000_000);
+        }
+    }
+    latest
+}
+
+/// Výsledek dohledání souborů změněných, když ochrana neběžela.
+#[derive(Debug, Default)]
+pub struct ChangedFiles {
+    pub files: Vec<PathBuf>,
+    /// `false`, když se procházení zastavilo na limitu.
+    pub complete: bool,
+}
+
+/// Soubory v hlídaných složkách, které se změnily nebo přibyly od `since_ms`.
+/// Po spuštění tak ochrana dožene, co se stalo, když neběžela. Symlinky se
+/// nesledují; rozpracovaná stažení, systémové soubory a vyloučené složky se
+/// přeskočí. `max_files` omezuje výsledek, `max_visited` délku procházení.
+pub fn changed_since(
+    folders: &[PathBuf],
+    excluded: &[PathBuf],
+    since_ms: u64,
+    max_files: usize,
+    max_visited: usize,
+) -> ChangedFiles {
+    let mut result = ChangedFiles {
+        files: Vec::new(),
+        complete: true,
+    };
+    let mut visited = 0usize;
+    for folder in folders {
+        let walk = walkdir::WalkDir::new(folder)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| !excluded.iter().any(|dir| entry.path().starts_with(dir)));
+        for entry in walk.flatten() {
+            visited += 1;
+            if visited > max_visited || result.files.len() >= max_files {
+                result.complete = false;
+                return result;
+            }
+            let path = entry.path();
+            if !entry.file_type().is_file() || is_partial(path) || is_hidden_system_file(path) {
+                continue;
+            }
+            if entry
+                .metadata()
+                .is_ok_and(|meta| changed_at_ms(&meta) >= since_ms)
+            {
+                result.files.push(path.to_path_buf());
+            }
+        }
+    }
+    result
+}
+
 /// Běžící hlídání; zastaví se zahozením.
 pub struct FolderWatcher {
     _watcher: RecommendedWatcher,
@@ -160,6 +234,45 @@ impl Drop for FolderWatcher {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn files_changed_while_not_watching_are_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let watched = tmp.path().join("watched");
+        let excluded = watched.join("excluded");
+        let nested = watched.join("a").join("b");
+        std::fs::create_dir_all(&excluded).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(watched.join("new.exe"), b"x").unwrap();
+        std::fs::write(nested.join("deep.zip"), b"x").unwrap();
+        std::fs::write(watched.join("film.mp4.part"), b"x").unwrap();
+        std::fs::write(watched.join(".DS_Store"), b"x").unwrap();
+        std::fs::write(excluded.join("skip.exe"), b"x").unwrap();
+        let folders = vec![watched.clone()];
+        let excluded = vec![excluded];
+        let hour_ago = crate::now_ms() - 3_600_000;
+
+        let mut found = changed_since(&folders, &excluded, hour_ago, 100, 10_000);
+        found.files.sort();
+        assert!(found.complete);
+        assert_eq!(
+            found.files,
+            vec![nested.join("deep.zip"), watched.join("new.exe")]
+        );
+
+        // Nic se nezměnilo od „budoucnosti“.
+        let later = crate::now_ms() + 3_600_000;
+        assert!(
+            changed_since(&folders, &excluded, later, 100, 10_000)
+                .files
+                .is_empty()
+        );
+
+        // Limit výsledku se přizná.
+        let capped = changed_since(&folders, &excluded, hour_ago, 1, 10_000);
+        assert_eq!(capped.files.len(), 1);
+        assert!(!capped.complete);
+    }
 
     #[test]
     fn new_files_are_reported_after_they_settle() {

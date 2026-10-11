@@ -14,7 +14,6 @@ use antishield_core::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -236,13 +235,8 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<Settings, Err
         services::apply_protection(&app);
     }
     if before.launch_at_login != settings.launch_at_login {
-        let autostart = app.autolaunch();
-        let result = if settings.launch_at_login {
-            autostart.enable()
-        } else {
-            autostart.disable()
-        };
-        result.map_err(|e| app_error("autostart", &e.to_string()))?;
+        // Problém (např. aplikace mimo Aplikace) se ukáže v rozhraní.
+        crate::apply_background_setting(&app, settings.launch_at_login);
     }
     Ok(settings)
 }

@@ -30,6 +30,7 @@ rustls = { version = "0.23.45", default-features = false, features = ["ring", "s
 tokio = { version = "1.53.2", features = ["time"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 uuid.workspace = true
+plist.workspace = true
 
 [lints]
 workspace = true
