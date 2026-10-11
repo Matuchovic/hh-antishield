@@ -307,7 +307,7 @@ pub fn is_startup_location(path: &Path) -> bool {
     startup_dirs().iter().any(|dir| dir == parent)
 }
 
-fn program_from_plist(path: &Path) -> Option<(String, Option<PathBuf>)> {
+pub(crate) fn program_from_plist(path: &Path) -> Option<(String, Option<PathBuf>)> {
     if fs::symlink_metadata(path).ok()?.len() > MAX_PLIST_BYTES {
         return None;
     }
