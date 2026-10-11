@@ -20,6 +20,10 @@ use crate::settings::Settings;
 const MAX_SELECTIONS: usize = 20;
 /// Kolik posledních zásahů hlídání držíme pro rozhraní.
 const MAX_DETECTIONS: usize = 200;
+/// Souhrn poslední kontroly, aby ho přehled ukázal i po restartu.
+const LAST_SUMMARY_FILE: &str = "last-summary.json";
+/// Větší soubor se souhrnem se nečte (poškození nebo podvržení).
+const MAX_SUMMARY_BYTES: u64 = 8 * 1024 * 1024;
 /// Aktualizace pravidel je „živá“, když poslední úspěch není starší.
 const RULES_FRESH_MS: u64 = 48 * 60 * 60 * 1000;
 
@@ -94,6 +98,8 @@ pub struct RuntimeInfo {
     pub startup_watched: bool,
     pub programs_checked: u64,
     pub programs_since_ms: Option<u64>,
+    /// Plný přístup k disku (jen macOS; jinde `None`).
+    pub full_disk_access: Option<bool>,
 }
 
 pub struct AppState {
@@ -103,6 +109,9 @@ pub struct AppState {
     selections: Mutex<VecDeque<(String, Vec<PathBuf>)>>,
     current_scan: Mutex<Option<ScanHandle>>,
     last_summary: Arc<Mutex<Option<ScanSummary>>>,
+    /// Souhrn z minulého spuštění (jen k zobrazení; nálezy z něj se před
+    /// vyčištěním znovu ověří, soubor na disku o zásahu nerozhoduje).
+    restored_summary: Option<ScanSummary>,
     pending_update: Mutex<Option<tauri_plugin_updater::Update>>,
     pub rules_status: Mutex<RulesStatus>,
     pub protection: Mutex<ProtectionRuntime>,
@@ -139,6 +148,7 @@ pub fn now_ms() -> u64 {
 impl AppState {
     pub fn new(data_dir: PathBuf) -> Self {
         let settings = Settings::load(&data_dir.join("settings.json"));
+        let restored_summary = load_summary(&data_dir.join(LAST_SUMMARY_FILE));
         Self {
             data_dir,
             engine: OnceLock::new(),
@@ -146,6 +156,7 @@ impl AppState {
             selections: Mutex::new(VecDeque::new()),
             current_scan: Mutex::new(None),
             last_summary: Arc::new(Mutex::new(None)),
+            restored_summary,
             pending_update: Mutex::new(None),
             rules_status: Mutex::new(RulesStatus::default()),
             protection: Mutex::new(ProtectionRuntime::default()),
@@ -375,8 +386,25 @@ impl AppState {
         self.last_summary.clone()
     }
 
+    /// Poslední kontrola: z tohoto spuštění, jinak uložená z minulého.
     pub fn last_summary(&self) -> Option<ScanSummary> {
-        lock(&self.last_summary).clone()
+        lock(&self.last_summary)
+            .clone()
+            .or_else(|| self.restored_summary.clone())
+    }
+
+    /// Cesty nálezů z minulého spuštění (bez nálezu z tohoto spuštění), které
+    /// se před vyčištěním musí znovu zkontrolovat.
+    pub fn restored_finding_paths(&self, paths: &[String]) -> Vec<PathBuf> {
+        if lock(&self.last_summary).is_some() {
+            return Vec::new();
+        }
+        self.restored_summary
+            .iter()
+            .flat_map(|summary| summary.findings.iter())
+            .filter(|finding| paths.contains(&finding.path))
+            .map(|finding| PathBuf::from(&finding.path))
+            .collect()
     }
 
     pub fn set_pending_update(&self, update: Option<tauri_plugin_updater::Update>) {
@@ -402,7 +430,8 @@ impl AppState {
                 found.push(finding.clone());
             }
         };
-        if let Some(summary) = self.last_summary() {
+        // Jen nálezy z tohoto spuštění; uložené z minulého se ověřují znovu.
+        if let Some(summary) = lock(&self.last_summary).as_ref() {
             summary.findings.iter().for_each(&mut push);
         }
         for detection in lock(&self.detections).iter() {
@@ -417,7 +446,9 @@ impl AppState {
     }
 
     pub fn runtime_info(&self) -> RuntimeInfo {
-        // Nastavení dřív než zámek ochrany (vždy stejné pořadí zámků).
+        // Kontrola přístupu (otevření souboru) a nastavení dřív než zámek
+        // ochrany (vždy stejné pořadí zámků).
+        let full_disk_access = antishield_core::privacy::full_disk_access();
         let chosen = self.settings().watch_paths();
         let runtime = lock(&self.protection);
         let watched: &[PathBuf] = runtime.watcher.as_ref().map_or(&[], |w| w.watched());
@@ -439,8 +470,35 @@ impl AppState {
             last_scheduled_run_ms: *lock(&self.last_scheduled_run_ms),
             background_problem: lock(&self.background_problem).clone(),
             last_catch_up: lock(&self.last_catch_up).clone(),
+            full_disk_access,
         }
     }
+}
+
+/// Uloží souhrn kontroly (přes dočasný soubor, aby se nezapsal napůl).
+pub fn save_summary(data_dir: &Path, summary: &ScanSummary) {
+    let Ok(bytes) = serde_json::to_vec(summary) else {
+        return;
+    };
+    let path = data_dir.join(LAST_SUMMARY_FILE);
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, bytes).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+fn load_summary(path: &Path) -> Option<ScanSummary> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_SUMMARY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > MAX_SUMMARY_BYTES {
+        return None;
+    }
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// Self-test bez okna. Data jdou do dočasné složky, uživatelská data se nemění.
@@ -498,5 +556,55 @@ mod tests {
         ));
         assert!(lock(&state.protection).access_denied.is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn summary_with_finding(path: &str) -> ScanSummary {
+        serde_json::from_value(serde_json::json!({
+            "scanId": "s1", "outcome": { "type": "completed" }, "roots": ["/tmp"],
+            "startedAtMs": 1, "finishedAtMs": 2, "filesScanned": 10, "bytesScanned": 100,
+            "archivesNotInspected": 0, "yaraIncomplete": 0, "skippedTotal": 0,
+            "skippedByReason": [], "skippedSample": [], "engineVersion": "0.4.1",
+            "rulePack": { "packId": "p", "version": "1", "sequence": 1, "ruleCount": 1,
+                "signingKeyId": "k", "testPack": false, "createdAtUnix": 0, "expiresAtUnix": 0,
+                "expired": false, "yaraRuleCount": 0, "sources": [] },
+            "findings": [{ "path": path, "sha256": "00", "ruleId": "r", "ruleName": "r",
+                "ruleVersion": 1, "ruleDescription": "", "severity": "high", "testOnly": false,
+                "evidence": [], "identity": { "device": 0, "inode": 0, "size": 0, "modifiedSec": 0,
+                    "modifiedNsec": 0, "changedSec": 0, "changedNsec": 0 },
+                "changedDuringRead": false, "archiveEntry": null, "origin": null }]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_last_scan_survives_a_restart_but_is_rechecked_before_cleaning() {
+        let tmp = tempfile::tempdir().unwrap();
+        save_summary(tmp.path(), &summary_with_finding("/x/evil.app"));
+
+        let state = AppState::new(tmp.path().to_path_buf());
+        assert_eq!(state.last_summary().map(|s| s.files_scanned), Some(10));
+        let paths = vec!["/x/evil.app".to_string()];
+        // Uložený nález sám nic neizoluje, jen se znovu zkontroluje.
+        assert!(state.known_findings(&paths).is_empty());
+        assert_eq!(
+            state.restored_finding_paths(&paths),
+            vec![PathBuf::from("/x/evil.app")]
+        );
+
+        // Nová kontrola v tomto spuštění má přednost.
+        *lock(&state.last_summary) = Some(summary_with_finding("/x/evil.app"));
+        assert_eq!(state.known_findings(&paths).len(), 1);
+        assert!(state.restored_finding_paths(&paths).is_empty());
+    }
+
+    #[test]
+    fn a_damaged_summary_file_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(LAST_SUMMARY_FILE), b"{ not json").unwrap();
+        assert!(
+            AppState::new(tmp.path().to_path_buf())
+                .last_summary()
+                .is_none()
+        );
     }
 }

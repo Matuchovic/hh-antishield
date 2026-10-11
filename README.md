@@ -79,9 +79,9 @@ cd app && npm run tauri build                      # balíček; potřebuje TAURI
   Defender); aplikace ochrany systému nikdy nevypíná ani nemění.
 - Testy používají jen neškodné vzorky (EICAR, syntetická data, značky).
   Skutečný malware do repozitáře nepatří.
-- Rozhraní smí volat jen 21 příkazů povolených v
+- Rozhraní smí volat jen 24 příkazů povolených v
   `app/src-tauri/capabilities/default.json`; cesty ke kontrole vybírá nativní
-  dialog v backendu a vyčistit jde jen nález, který backend sám vytvořil. App Sandbox je vypnutý, protože aplikace v sandboxu se
+  dialog v backendu a vyčistit jde jen nález, který backend sám vytvořil nebo právě znovu ověřil. App Sandbox je vypnutý, protože aplikace v sandboxu se
   nemůže sama aktualizovat; aktualizace přijme jen s platným podpisem.
 - Auditní log je řetězený SHA-256 (`antishield audit verify`).
 

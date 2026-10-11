@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AccessPrompt } from "./components/AccessPrompt";
 import { Intro } from "./components/Intro";
 import { Sidebar, type Screen } from "./components/Sidebar";
 import { UpdateBanner } from "./components/UpdateBanner";
@@ -133,6 +134,7 @@ export function App() {
           {content}
         </div>
       </main>
+      <AccessPrompt app={app} paused={intro !== "done"} />
       {intro === "show" ? <Intro sound={settings?.sounds ?? true} onDone={() => setIntro("done")} /> : null}
     </div>
   );

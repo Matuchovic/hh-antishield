@@ -1,6 +1,6 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.4.0)
+Aktualizováno: 2026-10-11 (v0.4.1)
 
 ## Stav
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
@@ -9,6 +9,11 @@ Aktualizováno: 2026-10-11 (v0.4.0)
   enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
   Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
   0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.4.1: žádost o plný přístup k disku při spuštění (pozná povolení do 5 s,
+  hned přidá hlídání příloh Apple Mail, nabídne restart); auditní log
+  s výhradním zámkem a uzavřením poškozeného souboru (problém se hlásí jednou
+  a srozumitelně); jen jedna instance na macOS (agent počká, žádná smyčka
+  restartů); poslední kontrola přežije restart; oprava dlaždice na přehledu.
 - v0.4.0: kontrola obsahu PKG a DMG (macOS), ochrana e-mailových příloh
   Apple Mail a přehled oprávnění aplikací s upozorněním na nové citlivé
   oprávnění (obojí s plným přístupem k disku), rozšíření prohlížečů v rychlé
@@ -34,7 +39,7 @@ Aktualizováno: 2026-10-11 (v0.4.0)
   složek, procesy a položky po spuštění, stav systému, audit, self-test.
 - `crates/antishield-cli` – `antishield` (scan, selftest, rules build/sign/
   verify, audit verify).
-- `app/` – Tauri 2 + React; 21 povolených příkazů, přísná CSP, služby na
+- `app/` – Tauri 2 + React; 24 povolených příkazů, přísná CSP, služby na
   pozadí (hlídání, pravidla po 6 h, plánovač), lišta, single-instance.
 
 ## Rozhodnutí
@@ -61,13 +66,24 @@ Aktualizováno: 2026-10-11 (v0.4.0)
 - Otisky z MalwareBazaar (abuse.ch) nepoužity: export vyžaduje Auth-Key
   a komerční použití jen s placeným předplatným Spamhaus (podmínky abuse.ch,
   oddíl 4 a 7.3). Detekce dál z YARA Forge core (licence pro komerční použití).
+- Audit: výhradní zámek `audit.lock` (zapisuje jen jeden proces); poškozený
+  soubor se při otevření uzavře, zápis pokračuje v novém souboru navázaném na
+  poslední platný záznam. Incident je jednou v událostech, komponenta Audit
+  pak běží normálně; `antishield audit verify` ukazuje historii dál.
+- Jedna instance na macOS: zámek `instance.lock` v datech aplikace. Agent
+  čeká, až předchozí instance skončí; ruční spuštění po 3 s předá okno běžící
+  instanci (plugin single-instance).
+- Souhrn poslední kontroly se ukládá (`last-summary.json`) jen k zobrazení;
+  nález z minulého spuštění se před vyčištěním znovu zkontroluje.
 - Animace jen transform/opacity, bez filtru blur a bez `will-change` na
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
 ## Testy (2026-10-11, lokálně)
-- Rust: 85 testů na Linuxu (jádro 71, CLI 4, aplikace 10) + test PKG/DMG
-  jen na macOS, clippy `-D warnings`,
-  rustfmt; self-test aplikace `--self-test` prošel.
+- Rust: 93 testů na Linuxu (jádro 73, CLI 4, aplikace 16) + test PKG/DMG
+  jen na macOS, clippy `-D warnings`, rustfmt.
+- 0.4.1: žádost o přístup prošla v Chromiu s náhradou IPC (dotaz, čekání,
+  restart, potvrzení, Esc, Tab, okno 1024 × 700); dlaždice bez překryvu
+  v 1024, 1400 a 1850 px. Na Macu zatím neověřeno (TCC, launchd, restart).
 - Produkční řetězec pravidel lokálně: build → podpis produkčním klíčem →
   verify → self-test → nález pravidlem z Forge. Odhalil chybu: `rules sign`
   kontroloval podpis jako testovací klíč (opraveno + testy).
@@ -89,7 +105,9 @@ Aktualizováno: 2026-10-11 (v0.4.0)
   pád v tvrzeném prostředí neodhalil (opraveno).
 - Repozitář je veřejný – zvážit přepnutí na soukromý.
 - Z cloudového prostředí nejde stahovat artefakty, tagovat ani nastavit secrets.
-- Balíčky nejsou podepsané Developer ID ani pro Windows.
+- Balíčky nejsou podepsané Developer ID ani pro Windows. S ad-hoc podpisem
+  macOS po aktualizaci obvykle zapomene udělená oprávnění (plný přístup,
+  složky); žádost o přístup proto radí přepínač vypnout a zapnout.
 - Architektonický dokument (Claude Docs) ještě popisuje nativní variantu.
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
@@ -100,6 +118,6 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Sloučit PR s 0.4.0 → Release (publish) → na Macu: povolit plný přístup
-k disku, ověřit přehled oprávnění, EICAR v DMG/PKG ve Stažených, přílohu
-s EICAR v Apple Mail a aktualizaci přes banner.
+Sloučit PR s 0.4.1 → Release (publish) → na Macu ověřit žádost o plný
+přístup, restart, zmizení oranžového Auditu a poslední kontrolu po restartu.
+Pak 0.5: radar ochrany v reálném čase, příběh útoku, nové jádro.

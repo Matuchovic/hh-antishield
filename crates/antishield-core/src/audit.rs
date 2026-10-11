@@ -4,10 +4,17 @@
 //! vynechání nebo přehození záznamu je při ověření vidět. Útočník se stejnými
 //! právy ale může přepsat celý log; to řeší až zápis privilegovanou komponentou
 //! nebo odesílání na server v dalších verzích.
+//!
+//! Zapisovat smí jen jeden proces (výhradní zámek); dva zapisovatelé by
+//! navazovali na stejný záznam a řetěz by se přetrhl. Poškozený soubor (useknutý
+//! zápis po pádu, přetržený řetěz) se při otevření uzavře a zápis pokračuje
+//! v novém souboru navázaném na poslední platný záznam. Problém se tak ohlásí
+//! jednou, ověření celého logu ho ale ukazuje dál.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,6 +28,9 @@ pub const KEEP_FILES: usize = 5;
 /// Soubor větší než tento limit se při otevření nečte celý (poškození nebo útok).
 const MAX_READ_BYTES: u64 = 64 * 1024 * 1024;
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const LOCK_FILE: &str = "audit.lock";
+/// Jak dlouho počkat, než log uvolní jiný proces (např. končící instance při restartu).
+const LOCK_WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,13 +90,12 @@ struct ParsedFile {
     /// (záznam, hash jeho řádku)
     records: Vec<(Record, String)>,
     problems: Vec<String>,
-    /// Soubor nekončí znakem nového řádku (useknutý poslední zápis).
-    truncated: bool,
 }
 
 fn parse_file(data: &[u8], name: &str) -> ParsedFile {
     let mut records = Vec::new();
     let mut problems = Vec::new();
+    // Soubor nekončí znakem nového řádku: poslední zápis je useknutý.
     let truncated = !data.is_empty() && !data.ends_with(b"\n");
     let mut lines: Vec<&[u8]> = data.split(|b| *b == b'\n').collect();
     // split na konci vrátí prázdný kus za posledním '\n'; useknutý řádek ponecháme jako problém.
@@ -107,11 +116,44 @@ fn parse_file(data: &[u8], name: &str) -> ParsedFile {
             )),
         }
     }
-    ParsedFile {
-        records,
-        problems,
-        truncated,
+    ParsedFile { records, problems }
+}
+
+/// Výhradní zámek logu. Když ho drží jiný proces, počká nejvýš `wait`.
+fn lock_dir(dir: &Path, wait: Duration) -> Result<File, EngineError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join(LOCK_FILE))?;
+    let deadline = Instant::now() + wait;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(EngineError::Audit(
+                    "the audit log is in use by another AntiShield process".into(),
+                ));
+            }
+            // Souborový systém bez zámků (některé síťové disky): log jde
+            // dál používat jako dřív, ochrana se kvůli tomu nevypíná.
+            Err(TryLockError::Error(_)) => return Ok(file),
+        }
     }
+}
+
+/// Smaže nejstarší soubory logu nad limit `KEEP_FILES` (jen podle přesného vzoru názvu).
+fn prune(dir: &Path) -> Result<(), EngineError> {
+    let files = list_files(dir)?;
+    if files.len() > KEEP_FILES {
+        for (_, old) in &files[..files.len() - KEEP_FILES] {
+            fs::remove_file(old)?;
+        }
+    }
+    Ok(())
 }
 
 /// Otevřený auditní log.
@@ -124,19 +166,26 @@ pub struct AuditLog {
     last_hash: String,
     next_seq: u64,
     integrity_issue: Option<String>,
+    /// Drží výhradní zámek logu po celou dobu otevření.
+    _lock: File,
 }
 
 impl AuditLog {
-    /// Otevře (nebo založí) log v adresáři `dir`.
+    /// Otevře (nebo založí) log v adresáři `dir`. Když log používá jiný
+    /// proces, chvíli počká; pak skončí chybou (dva zapisovatelé by ho poškodili).
     pub fn open(dir: &Path) -> Result<Self, EngineError> {
+        Self::open_waiting(dir, LOCK_WAIT)
+    }
+
+    fn open_waiting(dir: &Path, wait: Duration) -> Result<Self, EngineError> {
         fs::create_dir_all(dir)?;
         restrict_dir_permissions(dir);
+        let lock = lock_dir(dir, wait)?;
         let files = list_files(dir)?;
         let mut index = files.last().map_or(1, |(i, _)| *i);
         let mut last_hash = GENESIS.to_string();
         let mut next_seq = 1;
         let mut problems: Vec<String> = Vec::new();
-        let mut needs_newline = false;
 
         // Poslední platný záznam hledáme v aktuálním souboru, případně v předchozích
         // (aktuální soubor může být prázdný hned po rotaci).
@@ -146,16 +195,11 @@ impl AuditLog {
                 Ok(data) => data,
                 Err(err) => {
                     problems.push(err.to_string());
-                    if position == 0 {
-                        // Nečitelný aktuální soubor nepřepisujeme; začneme nový.
-                        index += 1;
-                    }
                     continue;
                 }
             };
             let parsed = parse_file(&data, &name);
             if position == 0 {
-                needs_newline = parsed.truncated;
                 problems.extend(parsed.problems.iter().cloned());
                 let mut prev: Option<&str> = None;
                 for (record, line_hash) in &parsed.records {
@@ -172,11 +216,17 @@ impl AuditLog {
             }
         }
 
+        // Poškozený soubor necháme, jak je (ověření celého logu ho ukáže),
+        // a pokračujeme v novém souboru navázaném na poslední platný záznam.
+        // Příští otevření tak stejný problém nehlásí znovu.
+        let seal = !problems.is_empty();
+        if seal {
+            index += 1;
+        }
         let path = dir.join(file_name(index));
-        let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
-        if needs_newline {
-            // Useknutý řádek necháme, jak je (ověření ho ohlásí); nový záznam začne na novém řádku.
-            file.write_all(b"\n")?;
+        let file = OpenOptions::new().create(true).append(true).open(&path)?;
+        if seal {
+            prune(dir)?;
         }
         let size = file.metadata()?.len();
         Ok(Self {
@@ -187,6 +237,7 @@ impl AuditLog {
             last_hash,
             next_seq,
             integrity_issue: (!problems.is_empty()).then(|| problems.join("; ")),
+            _lock: lock,
         })
     }
 
@@ -237,14 +288,7 @@ impl AuditLog {
         let path = self.dir.join(file_name(self.index));
         self.file = OpenOptions::new().create(true).append(true).open(path)?;
         self.size = 0;
-        // Mažeme jen vlastní staré soubory logu podle přesného vzoru názvu.
-        let files = list_files(&self.dir)?;
-        if files.len() > KEEP_FILES {
-            for (_, old) in &files[..files.len() - KEEP_FILES] {
-                fs::remove_file(old)?;
-            }
-        }
-        Ok(())
+        prune(&self.dir)
     }
 
     /// Posledních `limit` záznamů, nejnovější první.
@@ -331,4 +375,27 @@ pub fn verify_dir(dir: &Path) -> Result<VerifyReport, EngineError> {
         ok: problems.is_empty(),
         problems,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn only_one_process_writes_the_log() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut first = AuditLog::open(tmp.path()).unwrap();
+        first.append("first", json!({}), false).unwrap();
+
+        let err = AuditLog::open_waiting(tmp.path(), Duration::from_millis(100)).unwrap_err();
+        assert!(err.to_string().contains("in use"), "{err}");
+
+        drop(first);
+        let mut second = AuditLog::open_waiting(tmp.path(), Duration::ZERO).unwrap();
+        assert!(second.integrity_issue().is_none());
+        assert_eq!(second.append("second", json!({}), false).unwrap(), 2);
+        assert!(verify_dir(tmp.path()).unwrap().ok);
+    }
 }

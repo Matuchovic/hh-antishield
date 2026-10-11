@@ -44,6 +44,7 @@ export const api = {
   privacyReport: () => invoke<PrivacyReport>("privacy_report"),
   updateRulesNow: () => invoke<RuleUpdateOutcome>("update_rules_now"),
   runtimeInfo: () => invoke<RuntimeInfo>("runtime_info"),
+  restartApp: () => invoke<void>("restart_app"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   pickWatchFolder: () => invoke<string | null>("pick_watch_folder"),
@@ -60,7 +61,7 @@ export function onUpdateProgress(handler: (progress: UpdateProgress) => void): P
 }
 
 /** Události backendu pro rozhraní. */
-export function onAppEvent<T>(name: "engine-ready" | "protection-event" | "rules-updated" | "quarantine-changed" | "navigate" | "scheduled-scan", handler: (payload: T) => void): Promise<UnlistenFn> {
+export function onAppEvent<T>(name: "engine-ready" | "protection-event" | "rules-updated" | "quarantine-changed" | "navigate" | "scheduled-scan" | "access-changed", handler: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (message) => handler(message.payload));
 }
 

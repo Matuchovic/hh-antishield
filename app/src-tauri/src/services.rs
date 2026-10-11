@@ -1,7 +1,7 @@
 //! Služby na pozadí: aktualizace pravidel, hlídání složek, plánované kontroly
 //! a oznámení. Všechny běží mimo hlavní vlákno, aby okno nesekalo.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -45,6 +45,7 @@ impl ScanObserver for EmitObserver {
             if let Ok(mut last) = self.last_summary.lock() {
                 *last = Some(summary.clone());
             }
+            crate::state::save_summary(&self.app.state::<AppState>().data_dir, summary);
             let real: Vec<_> = summary.findings.iter().filter(|f| !f.test_only).collect();
             if !real.is_empty() {
                 notify(
@@ -199,8 +200,15 @@ pub fn start_rules_updater(app: AppHandle) {
 
 // ---------- Hlídání složek ----------
 
+/// Přenastavení hlídání běží vždy jen jedno (nastavení, změna přístupu,
+/// start): souběžné by si navzájem přepsaly hlídač uvnitř zámku.
+static APPLYING: Mutex<()> = Mutex::new(());
+
 /// Zapne, vypne nebo přenastaví hlídání podle aktuálního nastavení.
 pub fn apply_protection(app: &AppHandle) {
+    let _serial = APPLYING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let state = app.state::<AppState>();
     let settings = state.settings();
     // Starý hlídač se zastaví (a počká na své vlákno) až mimo zámek: jeho
@@ -253,6 +261,25 @@ const HEARTBEAT_MARGIN_MS: u64 = 5 * 60 * 1000;
 const FIRST_RUN_LOOKBACK_MS: u64 = 24 * 60 * 60 * 1000;
 const CATCH_UP_MAX_FILES: usize = 5_000;
 const CATCH_UP_MAX_VISITED: usize = 200_000;
+
+const SHOW_WINDOW_FILE: &str = "show-window";
+/// Žádost o okno po restartu platí jen chvíli (jinak by ho ukázal i pozdější start agenta).
+const SHOW_WINDOW_VALID_MS: u64 = 60 * 1000;
+
+/// Restart z okna: nová instance okno ukáže, i když ji spustí agent na pozadí.
+pub fn request_window_after_restart(data_dir: &Path) {
+    let _ = std::fs::write(data_dir.join(SHOW_WINDOW_FILE), now_ms().to_string());
+}
+
+/// Spotřebuje žádost o okno z [`request_window_after_restart`]; `true`, když je čerstvá.
+pub fn take_window_request(data_dir: &Path) -> bool {
+    let path = data_dir.join(SHOW_WINDOW_FILE);
+    let requested_at = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| text.trim().parse::<u64>().ok());
+    let _ = std::fs::remove_file(&path);
+    requested_at.is_some_and(|at| now_ms().saturating_sub(at) < SHOW_WINDOW_VALID_MS)
+}
 
 /// Zapíše, že ochrana právě běží (volá se pravidelně a při ukončení).
 pub fn record_heartbeat(state: &AppState) {
@@ -481,6 +508,9 @@ pub fn start_process_monitor(app: AppHandle) {
 
 /// Jak často se kontroluje, kdo má citlivá oprávnění.
 const PRIVACY_POLL: Duration = Duration::from_secs(300);
+/// Plný přístup k disku se kontroluje častěji: po povolení se má ochrana
+/// e-mailů a soukromí zapnout hned, ne až za pět minut.
+const ACCESS_POLL: Duration = Duration::from_secs(5);
 const PRIVACY_SNAPSHOT: &str = "privacy-snapshot.json";
 
 /// Přehled oprávnění aplikací (kamera, mikrofon, obrazovka, …) uloží do stavu.
@@ -504,6 +534,7 @@ pub fn start_privacy_monitor(app: AppHandle) {
             let mut known: Option<Vec<antishield_core::privacy::Grant>> = std::fs::read(&path)
                 .ok()
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+            let mut full_disk_access = antishield_core::privacy::full_disk_access();
             loop {
                 let report = refresh_privacy(&state);
                 if report.problem.is_none() {
@@ -526,7 +557,20 @@ pub fn start_privacy_monitor(app: AppHandle) {
                     }
                     known = Some(report.grants);
                 }
-                std::thread::sleep(PRIVACY_POLL);
+                // Změna plného přístupu (povolení v Nastavení systému, odebrání):
+                // hned přenastavit hlídané složky (přílohy Apple Mail) a přehled.
+                let mut waited = Duration::ZERO;
+                while waited < PRIVACY_POLL {
+                    std::thread::sleep(ACCESS_POLL);
+                    waited += ACCESS_POLL;
+                    let now = antishield_core::privacy::full_disk_access();
+                    if now != full_disk_access {
+                        full_disk_access = now;
+                        apply_protection(&app);
+                        let _ = app.emit("access-changed", now);
+                        break;
+                    }
+                }
             }
         })
         .ok();
@@ -649,10 +693,12 @@ pub fn start_scheduler(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        FIRST_RUN_LOOKBACK_MS, HEARTBEAT_MARGIN_MS, Source, auto_remediate, catch_up_since,
-        last_due_at,
+        FIRST_RUN_LOOKBACK_MS, HEARTBEAT_MARGIN_MS, SHOW_WINDOW_FILE, SHOW_WINDOW_VALID_MS, Source,
+        auto_remediate, catch_up_since, last_due_at, request_window_after_restart,
+        take_window_request,
     };
     use crate::settings::Schedule;
+    use crate::state::now_ms;
     use chrono::{TimeZone, Utc};
 
     fn at(d: u32, h: u32) -> chrono::DateTime<Utc> {
@@ -751,5 +797,19 @@ mod tests {
             &finding(Severity::High),
             Source::File
         ));
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_restart_from_the_window_shows_the_window_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!take_window_request(tmp.path()), "no request, no window");
+        request_window_after_restart(tmp.path());
+        assert!(take_window_request(tmp.path()));
+        assert!(!take_window_request(tmp.path()), "the request is used up");
+        // Stará žádost (např. z restartu, který nedoběhl) okno neukáže.
+        let stale = now_ms() - SHOW_WINDOW_VALID_MS - 1;
+        std::fs::write(tmp.path().join(SHOW_WINDOW_FILE), stale.to_string()).unwrap();
+        assert!(!take_window_request(tmp.path()));
     }
 }

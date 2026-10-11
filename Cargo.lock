@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "antishield-app"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "antishield-core",
  "chrono",
@@ -135,13 +135,14 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "uuid",
 ]
 
 [[package]]
 name = "antishield-cli"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "antishield-core",
  "clap",
@@ -154,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "antishield-core"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aho-corasick",
  "antishield-core",
