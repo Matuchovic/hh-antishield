@@ -177,7 +177,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(watcher.watched(), [watched.clone()]);
+        assert_eq!(watcher.watched(), std::slice::from_ref(&watched));
 
         std::fs::write(watched.join("new.bin"), b"hello").unwrap();
         std::fs::write(watched.join("file.crdownload"), b"partial").unwrap();
