@@ -8,14 +8,14 @@ use std::time::Duration;
 use antishield_core::error::ErrorDto;
 use antishield_core::watch::FolderWatcher;
 use antishield_core::{
-    InspectResult, RuleUpdateOutcome, ScanEvent, ScanObserver, ScanRequest, ScanSummary,
+    InspectResult, RuleUpdateOutcome, ScanEvent, ScanObserver, ScanRequest, ScanSummary, SkipReason,
 };
 use chrono::{DateTime, Datelike, Local, TimeZone};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::{PresetScan, Schedule};
-use crate::state::{AppState, Detection, DetectionAction, now_ms};
+use crate::state::{AppState, Detection, DetectionAction, folder_readable, now_ms};
 
 const RULES_BASE: &str = "https://github.com/Matuchovic/hh-antishield/releases/download/rules";
 const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
@@ -201,13 +201,33 @@ pub fn start_rules_updater(app: AppHandle) {
 pub fn apply_protection(app: &AppHandle) {
     let state = app.state::<AppState>();
     let settings = state.settings();
+    // Starý hlídač se zastaví (a počká na své vlákno) až mimo zámek: jeho
+    // vlákno může právě v `on_new_files` čekat na stejný zámek.
+    let previous = state
+        .protection
+        .lock()
+        .ok()
+        .and_then(|mut runtime| runtime.watcher.take());
+    drop(previous);
+    let enabled = settings.protection_enabled && state.engine().is_ok();
+    // Čtení složky vyvolá dotaz macOS na přístup (Soubory a složky); dělá se
+    // mimo zámek, aby stav v okně nečekal na odpověď uživatele. Když přístup
+    // odmítne, hlídání se nevydává za funkční.
+    let denied = if enabled {
+        settings
+            .watch_paths()
+            .into_iter()
+            .find(|folder| folder.is_dir() && !folder_readable(folder))
+    } else {
+        None
+    };
     let Ok(mut runtime) = state.protection.lock() else {
         return;
     };
-    runtime.watcher = None;
     runtime.started_at_ms = None;
     runtime.error = None;
-    if !settings.protection_enabled || state.engine().is_err() {
+    runtime.access_denied = denied;
+    if !enabled {
         return;
     }
     let excluded = vec![state.data_dir.clone()];
@@ -236,9 +256,18 @@ fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
         return;
     };
     let settings = state.settings();
-    for (_, result) in engine.inspect_paths(&files) {
-        let InspectResult::Scanned { findings, .. } = result else {
-            continue;
+    for (path, result) in engine.inspect_paths(&files) {
+        let findings = match result {
+            InspectResult::Scanned { findings, .. } => findings,
+            InspectResult::Skipped(SkipReason::PermissionDenied) => {
+                // Bez přístupu ke složce hlídání nic nezkontroluje: přiznat to.
+                if let Ok(mut runtime) = state.protection.lock() {
+                    runtime.access_denied =
+                        Some(path.parent().map_or_else(|| path.clone(), PathBuf::from));
+                }
+                continue;
+            }
+            InspectResult::Skipped(_) => continue,
         };
         // Jeden zásah na soubor: první nález rozhoduje, zbytek je ve výsledcích.
         let Some(finding) = findings.into_iter().next() else {

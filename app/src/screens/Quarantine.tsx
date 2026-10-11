@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Icon } from "../components/Icon";
-import { formatBytes, formatDateTime } from "../lib/format";
+import { displayPath, formatBytes, formatDateTime } from "../lib/format";
 import type { AntiShield } from "../lib/useAntiShield";
 
 export function Quarantine({ app }: { app: AntiShield }) {
@@ -23,8 +23,8 @@ export function Quarantine({ app }: { app: AntiShield }) {
               </span>
               <span className="q-main">
                 <strong>{item.ruleName}</strong>
-                <span className="q-path" title={item.originalPath}>
-                  {item.originalPath}
+                <span className="q-path" title={displayPath(item.originalPath)}>
+                  {displayPath(item.originalPath)}
                 </span>
                 <span className="muted">
                   {formatDateTime(item.quarantinedAtMs)}, {formatBytes(item.size)}

@@ -1,7 +1,7 @@
 //! Stav aplikace sdílený mezi příkazy a službami na pozadí.
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use antishield_core::error::ErrorDto;
@@ -65,6 +65,14 @@ pub struct ProtectionRuntime {
     pub watcher: Option<FolderWatcher>,
     pub started_at_ms: Option<u64>,
     pub error: Option<String>,
+    /// Hlídaná složka, ve které systém nedovolil číst soubory (na macOS
+    /// Soukromí a zabezpečení → Soubory a složky). Hlídání pak není účinné.
+    pub access_denied: Option<PathBuf>,
+}
+
+/// Jde ve složce číst? Selže, když systém přístup zakázal.
+pub fn folder_readable(folder: &Path) -> bool {
+    std::fs::read_dir(folder).is_ok()
 }
 
 /// Přehled pro rozhraní: co se hlídá a co se stalo.
@@ -74,6 +82,7 @@ pub struct RuntimeInfo {
     pub watched: Vec<String>,
     pub watching_since_ms: Option<u64>,
     pub watch_error: Option<String>,
+    pub access_denied: Option<PathBuf>,
     pub detections: Vec<Detection>,
     pub rules: RulesStatus,
     pub last_scheduled_run_ms: Option<u64>,
@@ -178,12 +187,22 @@ impl AppState {
         };
         let settings = self.settings();
         let realtime = {
-            let runtime = lock(&self.protection);
+            let mut runtime = lock(&self.protection);
+            // Po povolení přístupu v systému se stav sám vrátí do pořádku.
+            if let Some(folder) = &runtime.access_denied
+                && folder_readable(folder)
+            {
+                runtime.access_denied = None;
+            }
             if !settings.protection_enabled {
                 ComponentState::Disabled
             } else if let Some(error) = &runtime.error {
                 ComponentState::Failed {
                     reason: error.clone(),
+                }
+            } else if runtime.access_denied.is_some() {
+                ComponentState::Degraded {
+                    reason: "no access to files in a watched folder".into(),
                 }
             } else {
                 match (&runtime.watcher, runtime.started_at_ms) {
@@ -315,6 +334,7 @@ impl AppState {
                 .unwrap_or_default(),
             watching_since_ms: runtime.started_at_ms,
             watch_error: runtime.error.clone(),
+            access_denied: runtime.access_denied.clone(),
             detections: lock(&self.detections).iter().cloned().collect(),
             rules: lock(&self.rules_status).clone(),
             last_scheduled_run_ms: *lock(&self.last_scheduled_run_ms),
@@ -342,4 +362,40 @@ pub fn headless_self_test() -> i32 {
     // Mažeme jen vlastní dočasnou složku self-testu.
     let _ = std::fs::remove_dir_all(&dir);
     code
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn realtime(state: &AppState) -> ComponentState {
+        state
+            .protection()
+            .components
+            .into_iter()
+            .find(|c| c.kind == ComponentKind::RealTimeProtection)
+            .unwrap()
+            .state
+    }
+
+    #[test]
+    fn denied_folder_access_is_reported_until_access_returns() {
+        let dir = std::env::temp_dir().join(format!("antishield-state-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state = AppState::new(dir.clone());
+        lock(&state.protection).access_denied = Some(dir.join("missing"));
+        assert!(matches!(
+            realtime(&state),
+            ComponentState::Degraded { reason } if reason == "no access to files in a watched folder"
+        ));
+        // Jakmile jde složka číst, stav se sám opraví.
+        lock(&state.protection).access_denied = Some(dir.clone());
+        assert!(!matches!(
+            realtime(&state),
+            ComponentState::Degraded { reason } if reason == "no access to files in a watched folder"
+        ));
+        assert!(lock(&state.protection).access_denied.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

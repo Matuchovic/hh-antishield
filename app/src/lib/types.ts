@@ -270,6 +270,7 @@ export interface RuntimeInfo {
   watched: string[];
   watchingSinceMs: number | null;
   watchError: string | null;
+  accessDenied: string | null;
   detections: Detection[];
   rules: RulesStatus;
   lastScheduledRunMs: number | null;

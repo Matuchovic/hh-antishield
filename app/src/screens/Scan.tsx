@@ -1,6 +1,6 @@
 import { Icon, type IconName } from "../components/Icon";
 import type { Screen } from "../components/Sidebar";
-import { formatBytes, formatCount, formatDuration } from "../lib/format";
+import { displayPath, formatBytes, formatCount, formatDuration } from "../lib/format";
 import type { PresetScan } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
 
@@ -55,15 +55,15 @@ export function Scan({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Scr
           </div>
         </dl>
         {p?.currentPath ? (
-          <p className="current-path" title={p.currentPath}>
-            {p.currentPath}
+          <p className="current-path" title={displayPath(p.currentPath)}>
+            {displayPath(p.currentPath)}
           </p>
         ) : null}
         {scan.liveFindings.length ? (
           <ul className="live-findings">
             {scan.liveFindings.map((f, i) => (
               <li key={`${f.path}-${f.ruleId}-${i}`}>
-                <strong>{f.ruleName}</strong> <span className="muted">{f.path}</span>
+                <strong>{f.ruleName}</strong> <span className="muted">{displayPath(f.path)}</span>
               </li>
             ))}
           </ul>

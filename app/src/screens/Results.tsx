@@ -6,6 +6,7 @@ import {
   describeEvidence,
   describeOrigin,
   describeOutcome,
+  displayPath,
   findingNote,
   formatBytes,
   formatCount,
@@ -94,7 +95,7 @@ export function Results({ app, onNavigate }: { app: AntiShield; onNavigate: (s: 
               return (
                 <li key={path} className={`finding${first.testOnly ? " is-test" : ""}${state && state !== "busy" && state.quarantined ? " is-clean" : ""}`}>
                   <div className="finding-head">
-                    <p className="finding-path">{path}</p>
+                    <p className="finding-path">{displayPath(path)}</p>
                     {state === undefined ? (
                       <button type="button" className="btn-danger small" onClick={() => void app.remediate([path])}>
                         Vyčistit
@@ -143,7 +144,7 @@ export function Results({ app, onNavigate }: { app: AntiShield; onNavigate: (s: 
             <ul className="skipped">
               {summary.skippedSample.map((s, i) => (
                 <li key={`${s.path}-${i}`}>
-                  <span>{s.path}</span> <span className="muted">{SKIP_LABELS[s.reason.type]}</span>
+                  <span>{displayPath(s.path)}</span> <span className="muted">{SKIP_LABELS[s.reason.type]}</span>
                 </li>
               ))}
             </ul>

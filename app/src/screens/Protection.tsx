@@ -1,7 +1,7 @@
 import { Icon } from "../components/Icon";
 import type { Screen } from "../components/Sidebar";
 import { Toggle } from "../components/Toggle";
-import { describeState, formatDateTime, stateTone } from "../lib/format";
+import { describeState, displayPath, formatDateTime, stateTone } from "../lib/format";
 import type { DetectionAction } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
 
@@ -53,6 +53,15 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
             />
           </div>
         ) : null}
+        {runtime?.accessDenied ? (
+          <p className="notice tone-alert" role="alert">
+            Systém nedovolil číst soubory ve složce {displayPath(runtime.accessDenied)}, takže je hlídání
+            nezkontroluje.{" "}
+            {app.info?.platform.startsWith("macos")
+              ? "Povolte přístup v Nastavení systému → Soukromí a zabezpečení → Soubory a složky (H&H AntiShield) nebo Plný přístup k disku."
+              : "Zkontrolujte oprávnění ke složce nebo ji v Nastavení odeberte."}
+          </p>
+        ) : null}
       </section>
 
       <section className="panel" aria-labelledby="watched-title">
@@ -66,7 +75,7 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
           <ul className="path-list">
             {runtime.watched.map((path) => (
               <li key={path}>
-                <Icon name="folder" size={18} /> {path}
+                <Icon name="folder" size={18} /> {displayPath(path)}
               </li>
             ))}
           </ul>
@@ -85,7 +94,7 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
                 <span className="dot" aria-hidden="true" />
                 <span className="detection-main">
                   <strong>{d.finding.ruleName}</strong>
-                  <span className="muted">{d.finding.path}</span>
+                  <span className="muted">{displayPath(d.finding.path)}</span>
                 </span>
                 <span className="detection-side">
                   <span>{actionText(d.action)}</span>

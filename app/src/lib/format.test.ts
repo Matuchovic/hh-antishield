@@ -4,6 +4,7 @@ import {
   describeAuditEvent,
   describeEvidence,
   describeState,
+  displayPath,
   formatBytes,
   formatCount,
   headline,
@@ -88,6 +89,12 @@ describe("texts", () => {
     expect(formatCount(5, "soubor", "soubory", "souborů")).toBe("5 souborů");
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1_500_000)).toMatch(/^1,5\sMB$/);
+  });
+
+  it("hides the Windows verbatim path prefix", () => {
+    expect(displayPath("\\\\?\\C:\\Users\\eva\\a.exe")).toBe("C:\\Users\\eva\\a.exe");
+    expect(displayPath("\\\\?\\UNC\\srv\\share\\a.exe")).toBe("\\\\srv\\share\\a.exe");
+    expect(displayPath("/Users/eva/a.app")).toBe("/Users/eva/a.app");
   });
 
   it("describes a finished scan without a dangling separator", () => {
