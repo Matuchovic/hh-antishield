@@ -77,7 +77,11 @@ jobs:
           APP="target/universal-apple-darwin/release/bundle/macos/H&H AntiShield.app"
           codesign --verify --deep --strict --verbose=2 "$APP"
           lipo -archs "$APP/Contents/MacOS/antishield-app"
-          "target/universal-apple-darwin/release/antishield-app" --self-test
+          # Výjimka pro kód YARA-X překládaný za běhu musí být v podpisu.
+          codesign -d --entitlements - "$APP" 2>/dev/null | grep -q allow-unsigned-executable-memory
+          # Self-test podepsané aplikace z balíčku: běží v tvrzeném prostředí
+          # jako u uživatele (samotná binárka z target/ by pád neodhalila).
+          "$APP/Contents/MacOS/antishield-app" --self-test
       - name: Soubory k vydání
         run: |
           VER=$(node -p "require('./app/package.json').version")
