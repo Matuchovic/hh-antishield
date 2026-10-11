@@ -142,10 +142,13 @@ export const Emblem = memo(function Emblem({
   layers,
   scanning,
   still,
+  alert,
 }: {
   layers: string;
   scanning: boolean;
   still: boolean;
+  /** Nevyčištěné hrozby: jádro zůstane lehce rudé. */
+  alert: boolean;
 }) {
   const tones = layers.split(",");
   const running = tones.filter((t) => t === "good").length;
@@ -157,7 +160,7 @@ export const Emblem = memo(function Emblem({
     <figure className="emblem-wrap">
       <div
         ref={ref}
-        className={`emblem${scanning ? " is-scanning" : ""}`}
+        className={`emblem${scanning ? " is-scanning" : ""}${alert ? " is-alert" : ""}`}
         role="img"
         aria-label={`${running} ze ${SHIELD_LAYERS.length} ochranných vrstev běží${scanning ? ", kontrola probíhá" : ""}`}
       >

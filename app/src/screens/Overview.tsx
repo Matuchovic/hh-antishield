@@ -1,3 +1,4 @@
+import { storyFor } from "../lib/story";
 import { memo, useMemo } from "react";
 import { Backdrop } from "../components/Backdrop";
 import { Emblem } from "../components/Emblem";
@@ -115,6 +116,7 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
   const pending = summary?.findings.filter((f) => app.cleaning[f.path] === undefined) ?? [];
   // Nevyčištěné skutečné nálezy mají přednost před běžným stavem ochrany.
   const threats = scan.running ? [] : pending.filter((f) => !f.testOnly);
+  const threatStory = threats.map((f) => storyFor(app.stories, f.path, f.sha256)).find(Boolean);
   const tone = scan.running ? "good" : threats.length ? "alert" : h.tone;
   const title = scan.running ? "Kontrola právě běží" : threats.length ? "Pozor, nalezené hrozby" : h.title;
   const words = title.split(" ");
@@ -144,7 +146,12 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
           <br />
           {info ? platformName(info.platform) : ""}
         </p>
-        <Emblem layers={layers} scanning={scan.running} still={Boolean(app.settings?.reducedMotion)} />
+        <Emblem
+          layers={layers}
+          scanning={scan.running}
+          still={Boolean(app.settings?.reducedMotion)}
+          alert={threats.length > 0}
+        />
         <h1 id="hero-title" className="hero-headline">
           {words.join(" ")} <em>{accent}</em>
         </h1>
@@ -156,11 +163,20 @@ export function Overview({ app, onNavigate }: { app: AntiShield; onNavigate: (s:
             <Icon name="chevron" size={20} className="cta-chev" />
           </button>
         ) : threats.length ? (
-          <button type="button" className="cta cta-alert" onClick={() => void app.remediate(threats.map((f) => f.path))}>
-            <Icon name="sparkle" size={22} />
-            <span>Vyčistit vše</span>
-            <Icon name="chevron" size={20} className="cta-chev" />
-          </button>
+          <>
+            <button type="button" className="cta cta-alert" onClick={() => void app.remediate(threats.map((f) => f.path))}>
+              <Icon name="sparkle" size={22} />
+              <span>Vyčistit vše</span>
+              <Icon name="chevron" size={20} className="cta-chev" />
+            </button>
+            {threatStory ? (
+              <p className="hero-alt">
+                <button type="button" className="btn-link" onClick={() => app.openStory(threatStory.id)}>
+                  Zobrazit příběh útoku
+                </button>
+              </p>
+            ) : null}
+          </>
         ) : (
           <>
             <button type="button" className="cta" disabled={!ready} onClick={() => void app.startPreset("quick")}>
