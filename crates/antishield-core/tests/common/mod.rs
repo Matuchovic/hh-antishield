@@ -48,6 +48,29 @@ pub fn base_pack(rules: serde_json::Value) -> serde_json::Value {
     })
 }
 
+/// Zdroj YARA pro testovací sadu (formát 2).
+pub fn yara_source(id: &str, source: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "name": format!("Source {id}"),
+        "url": "https://example.com/rules",
+        "license": "MIT",
+        "source": source,
+    })
+}
+
+/// Sada s jedním testovacím vzorem a zdroji YARA.
+pub fn yara_pack(sources: serde_json::Value) -> serde_json::Value {
+    let mut pack = base_pack(serde_json::json!([rule(
+        "T-1",
+        "bytes",
+        serde_json::json!({ "pattern_hex": hex::encode(marker()) })
+    )]));
+    pack["format_version"] = 2.into();
+    pack["yara"] = sources;
+    pack
+}
+
 pub fn rule(id: &str, kind: &str, extra: serde_json::Value) -> serde_json::Value {
     let mut value = serde_json::json!({
         "id": id,

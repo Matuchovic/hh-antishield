@@ -7,8 +7,12 @@ use std::fs;
 use std::time::{Duration, Instant};
 
 use antishield_core::testvectors::{eicar, synthetic_sample};
-use antishield_core::{EngineError, ScanEvent, ScanOutcome, ScanRequest};
+use antishield_core::{
+    Engine, EngineConfig, EngineError, Evidence, RuleSource, ScanEvent, ScanOutcome, ScanRequest,
+    Severity,
+};
 use common::{engine, finding_rules, marker, scan, skipped_reasons, write};
+use serde_json::json;
 
 fn request(root: &std::path::Path) -> ScanRequest {
     ScanRequest::new(vec![root.to_path_buf()])
@@ -377,4 +381,218 @@ fn next_scan_starts_right_after_finished() {
         let (_, summary) = common::collect(&rx);
         assert_eq!(summary.outcome, ScanOutcome::Completed);
     }
+}
+
+const DEMO_YARA: &str = r#"
+rule Demo_Rule {
+    meta:
+        description = "Demo detection"
+        author = "Tester"
+        score = 85
+    strings:
+        $a = "HARMLESS-YARA-DEMO"
+    condition:
+        $a
+}
+rule Demo_Test {
+    meta:
+        hh_test_only = true
+    strings:
+        $a = "HH-ANTISHIELD-YARA-SELFTEST-0001"
+    condition:
+        $a
+}
+"#;
+
+fn production_engine(state: &std::path::Path, pack: &serde_json::Value) -> Engine {
+    let (pack, signature) = common::signed(pack);
+    let mut config = EngineConfig::new(state);
+    config.rules = RuleSource::Bytes { pack, signature };
+    config.trusted_keys = Some(common::trusted(false));
+    Engine::new(config).unwrap()
+}
+
+#[test]
+fn yara_rules_detect_content_and_explain_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("data");
+    write(&root.join("hit.bin"), b"....HARMLESS-YARA-DEMO....");
+    write(
+        &root.join("selftest.txt"),
+        b"xx HH-ANTISHIELD-YARA-SELFTEST-0001 xx",
+    );
+    write(&root.join("clean.bin"), b"nothing to see");
+    let mut pack = common::yara_pack(json!([common::yara_source("demo", DEMO_YARA)]));
+    pack["test_pack"] = false.into();
+    let engine = production_engine(&tmp.path().join("state"), &pack);
+    let (_, summary) = scan(&engine, request(&root));
+
+    let hit = summary
+        .findings
+        .iter()
+        .find(|f| f.path.ends_with("hit.bin"))
+        .unwrap();
+    assert_eq!(hit.rule_id, "YARA:demo:Demo_Rule");
+    assert_eq!(hit.rule_description, "Demo detection");
+    assert_eq!(hit.severity, Severity::High);
+    assert!(!hit.test_only);
+    assert!(matches!(
+        &hit.evidence[0],
+        Evidence::YaraMatch { source, rule, author: Some(author), .. }
+            if source == "demo" && rule == "Demo_Rule" && author == "Tester"
+    ));
+    let test = summary
+        .findings
+        .iter()
+        .find(|f| f.path.ends_with("selftest.txt"))
+        .unwrap();
+    assert!(test.test_only);
+    assert_eq!(test.severity, Severity::TestOnly);
+    assert!(
+        summary
+            .findings
+            .iter()
+            .all(|f| !f.path.ends_with("clean.bin"))
+    );
+    assert_eq!(summary.yara_incomplete, 0);
+    assert_eq!(summary.rule_pack.yara_rule_count, 2);
+}
+
+#[test]
+fn files_over_the_yara_limit_are_counted_not_hidden() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("data");
+    let mut big = b"HARMLESS-YARA-DEMO".to_vec();
+    big.resize(2 * 1024 * 1024, b'x');
+    write(&root.join("big.bin"), &big);
+    let pack = common::yara_pack(json!([common::yara_source("demo", DEMO_YARA)]));
+    let engine = common::engine_with_pack(&tmp.path().join("state"), &pack);
+    let mut req = request(&root);
+    req.limits.max_yara_file_bytes = 1024 * 1024;
+    let (_, summary) = scan(&engine, req);
+    assert_eq!(summary.files_scanned, 1);
+    assert!(summary.findings.is_empty());
+    assert_eq!(summary.yara_incomplete, 1);
+}
+
+fn zip_bytes(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    use std::io::Write;
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    {
+        let mut writer = zip::ZipWriter::new(&mut cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+    cursor.into_inner()
+}
+
+#[test]
+fn zip_contents_are_inspected_with_limits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("data");
+    write(
+        &root.join("bundle.zip"),
+        &zip_bytes(&[
+            ("inner/eicar.com", eicar()),
+            ("readme.txt", b"clean".to_vec()),
+        ]),
+    );
+    // 8 MiB nul se zabalí na pár kB: poměr komprese je nad limitem.
+    write(
+        &root.join("bomb.zip"),
+        &zip_bytes(&[("zeros.bin", vec![0u8; 8 * 1024 * 1024])]),
+    );
+    let nested = zip_bytes(&[("eicar.com", eicar())]);
+    write(
+        &root.join("nested.zip"),
+        &zip_bytes(&[("inner.zip", nested)]),
+    );
+    let engine = engine(&tmp.path().join("state"));
+    let (_, summary) = scan(&engine, request(&root));
+
+    let hits: Vec<_> = summary
+        .findings
+        .iter()
+        .filter(|f| f.path.ends_with("bundle.zip"))
+        .collect();
+    assert!(!hits.is_empty());
+    assert!(
+        hits.iter()
+            .all(|f| f.archive_entry.as_deref() == Some("inner/eicar.com"))
+    );
+    // Vnořený archiv se nerozbaluje a bomba se nečte celá: obojí je přiznané.
+    assert!(
+        summary
+            .findings
+            .iter()
+            .all(|f| !f.path.ends_with("nested.zip"))
+    );
+    assert_eq!(summary.archives_not_inspected, 2);
+}
+
+#[test]
+fn single_files_can_be_inspected_outside_a_scan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = engine(&tmp.path().join("state"));
+    let bad = tmp.path().join("eicar.com");
+    let good = tmp.path().join("clean.txt");
+    write(&bad, &eicar());
+    write(&good, b"clean");
+    let results = engine.inspect_paths(&[bad.clone(), good.clone(), tmp.path().join("missing")]);
+    assert_eq!(results.len(), 3);
+    match &results[0].1 {
+        antishield_core::InspectResult::Scanned { findings, complete } => {
+            assert!(!findings.is_empty());
+            assert!(complete);
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        matches!(&results[1].1, antishield_core::InspectResult::Scanned { findings, .. } if findings.is_empty())
+    );
+    assert!(matches!(
+        &results[2].1,
+        antishield_core::InspectResult::Skipped(_)
+    ));
+    let report = engine.remediate(match &results[0].1 {
+        antishield_core::InspectResult::Scanned { findings, .. } => &findings[0],
+        _ => unreachable!(),
+    });
+    assert!(report.quarantined.is_some(), "{report:?}");
+    assert!(report.problems.is_empty(), "{report:?}");
+    assert!(!bad.exists());
+}
+
+/// Symlinky v nadřazených složkách se vyřeší (macOS: `/var` → `/private/var`),
+/// symlink místo souboru se ale dál odmítne.
+#[cfg(unix)]
+#[test]
+fn single_file_inspection_resolves_parents_but_not_the_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let engine = engine(&tmp.path().join("state"));
+    let real = tmp.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    write(&real.join("eicar.com"), &eicar());
+    std::os::unix::fs::symlink(&real, tmp.path().join("via")).unwrap();
+    std::os::unix::fs::symlink(real.join("eicar.com"), real.join("link.com")).unwrap();
+    let results = engine.inspect_paths(&[
+        tmp.path().join("via").join("eicar.com"),
+        real.join("link.com"),
+    ]);
+    match &results[0].1 {
+        antishield_core::InspectResult::Scanned { findings, .. } => {
+            assert!(!findings.is_empty());
+            assert!(!std::path::Path::new(&findings[0].path).starts_with(tmp.path().join("via")));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(matches!(
+        &results[1].1,
+        antishield_core::InspectResult::Skipped(antishield_core::SkipReason::Symlink)
+    ));
 }

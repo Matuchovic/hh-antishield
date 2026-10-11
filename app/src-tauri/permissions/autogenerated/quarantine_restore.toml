@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quarantine-restore"
+description = "Enables the quarantine_restore command without any pre-configured scope."
+commands.allow = ["quarantine_restore"]
+
+[[permission]]
+identifier = "deny-quarantine-restore"
+description = "Denies the quarantine_restore command without any pre-configured scope."
+commands.deny = ["quarantine_restore"]

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   COMPONENT_LABELS,
+  describeAuditEvent,
   describeEvidence,
   describeState,
+  displayPath,
   formatBytes,
   formatCount,
   headline,
@@ -24,23 +26,31 @@ function components(overrides: Partial<Record<ComponentKind, ComponentState>>): 
 }
 
 describe("headline", () => {
-  it("version 0.1 never claims protection", () => {
+  it("manual scan never claims protection and says why", () => {
     const running: ComponentState = { type: "running", verifiedAtMs: 0 };
     const h = headline(
       "manualScanOnly",
-      components({ detectionEngine: running, rulePack: running, onDemandScan: running }),
+      components({ detectionEngine: running, rulePack: running, onDemandScan: running, realTimeProtection: { type: "disabled" } }),
     );
     expect(h.title).toBe("Ruční kontrola je připravená");
-    expect(h.title).not.toMatch(/chráněn/i);
-    expect(h.detail).toMatch(/není součástí verze 0\.1/);
+    expect(h.title).not.toMatch(/chráněn|hlídaný/i);
+    expect(h.detail).toMatch(/vypnuté/);
   });
 
-  it("never shows 'Ochrana běží' unless real-time protection runs", () => {
-    const levels: ProtectionLevel[] = ["notReady", "manualScanOnly", "protected"];
+  it("monitored says watched, never protected, and admits no blocking", () => {
+    const running: ComponentState = { type: "running", verifiedAtMs: 0 };
+    const h = headline("monitored", components({ realTimeProtection: running, updates: running }), "Mac");
+    expect(h.title).toBe("Váš Mac je hlídaný");
+    expect(h.title).not.toMatch(/chráněn/i);
+    expect(h.detail).toMatch(/neblokujeme/);
+  });
+
+  it("never claims protection or watching unless real-time protection runs", () => {
+    const levels: ProtectionLevel[] = ["notReady", "manualScanOnly", "monitored", "protected"];
     for (const level of levels) {
       for (const state of STATES) {
         const h = headline(level, components({ realTimeProtection: state }));
-        if (h.title === "Ochrana běží") {
+        if (/chráněn|hlídaný/.test(h.title)) {
           expect(state.type).toBe("running");
         }
       }
@@ -79,6 +89,20 @@ describe("texts", () => {
     expect(formatCount(5, "soubor", "soubory", "souborů")).toBe("5 souborů");
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1_500_000)).toMatch(/^1,5\sMB$/);
+  });
+
+  it("hides the Windows verbatim path prefix", () => {
+    expect(displayPath("\\\\?\\C:\\Users\\eva\\a.exe")).toBe("C:\\Users\\eva\\a.exe");
+    expect(displayPath("\\\\?\\UNC\\srv\\share\\a.exe")).toBe("\\\\srv\\share\\a.exe");
+    expect(displayPath("/Users/eva/a.app")).toBe("/Users/eva/a.app");
+  });
+
+  it("describes a finished scan without a dangling separator", () => {
+    const base = { seq: 1, tsMs: 0, kind: "scan_finished" };
+    expect(describeAuditEvent({ ...base, data: { filesScanned: 2, findings: 1 } }).detail).toBe("2 soubory, 1 nález");
+    expect(
+      describeAuditEvent({ ...base, data: { outcome: { type: "completed" }, filesScanned: 5, findings: 0 } }).detail,
+    ).toMatch(/^[^:]+: 5 souborů, 0 nálezů$/);
   });
 });
 

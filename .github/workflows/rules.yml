@@ -1,0 +1,102 @@
+name: Rules
+
+# Týdně sestaví produkční sadu pravidel z YARA Forge (jen licence vhodné ke
+# komerčnímu použití), podepíše ji, ověří self-testem a na čistém macOS
+# (žádný nález v souborech Applu) a zveřejní ve vydání „rules“, odkud si ji
+# aplikace sama stahuje. Podpisový klíč je jen v GitHub Secrets.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Zveřejnit sadu (aplikace si ji stáhne)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Sestavit, ověřit, zveřejnit
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      RULES_SIGNING_KEY: ${{ secrets.RULES_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Klíč pro podpis pravidel
+        run: |
+          if [ -z "$RULES_SIGNING_KEY" ]; then
+            echo "::error::Chybí GitHub Secret RULES_SIGNING_KEY"
+            exit 1
+          fi
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Stáhnout YARA Forge (core)
+        run: |
+          curl -fsSL -o forge.zip https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-core.zip
+          unzip -q forge.zip
+          ls -la packages/core
+      - name: Sestavit nástroj
+        run: cargo build --release -p antishield-cli --features signing
+      - name: Sestavit sadu
+        run: |
+          mkdir -p out
+          ./target/release/antishield rules build \
+            --base rules/base-pack.json \
+            --selftest rules/yara/hh-selftest.yar \
+            --forge packages/core/yara-rules-core.yar \
+            --sequence "$(date -u +%Y%m%d%H%M)" \
+            --version "$(date -u +%Y.%m.%d)" \
+            --min-yara-rules 500 \
+            --out out/hh-rules.json | tee build.txt
+          { echo '```'; cat build.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Podepsat
+        run: |
+          umask 077
+          printf '%s\n' "$RULES_SIGNING_KEY" > "$RUNNER_TEMP/rules.key"
+          ./target/release/antishield rules sign --pack out/hh-rules.json \
+            --key "$RUNNER_TEMP/rules.key" --key-id hh-rules-2026-10 --out out/hh-rules.json.sig
+          rm -f "$RUNNER_TEMP/rules.key"
+      - name: Ověřit podpis a self-test
+        run: |
+          ./target/release/antishield rules verify out/hh-rules.json out/hh-rules.json.sig
+          ./target/release/antishield --data-dir "$RUNNER_TEMP/selftest" \
+            --rules-pack out/hh-rules.json --rules-sig out/hh-rules.json.sig selftest
+      - name: Žádné falešné poplachy na čistém systému
+        run: |
+          set +e
+          ./target/release/antishield --data-dir "$RUNNER_TEMP/fp" \
+            --rules-pack out/hh-rules.json --rules-sig out/hh-rules.json.sig \
+            scan /System/Applications /usr/bin /usr/sbin /bin /sbin /usr/lib --json > fp.json
+          set -e
+          python3 - <<'PY'
+          import json, sys
+          summary = json.load(open("fp.json"))
+          bad = [f for f in summary["findings"] if not f["testOnly"]]
+          for f in bad[:30]:
+              print(f"::error::Falešný poplach {f['ruleId']}: {f['path']}")
+          print(f"Zkontrolováno {summary['filesScanned']} souborů, nálezů {len(bad)}")
+          sys.exit(1 if bad else 0)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hh-rules
+          path: out/*
+      - name: Zveřejnit
+        if: github.event_name == 'schedule' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view rules >/dev/null 2>&1; then
+            gh release create rules --prerelease --latest=false \
+              --title "H&H AntiShield – pravidla" \
+              --notes "Automaticky sestavovaná a podepsaná sada pravidel. Aplikace si ji stahuje sama."
+          fi
+          gh release upload rules out/hh-rules.json out/hh-rules.json.sig --clobber

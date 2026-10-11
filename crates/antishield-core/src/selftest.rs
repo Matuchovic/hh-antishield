@@ -9,6 +9,10 @@ use crate::rules::RulePack;
 use crate::testvectors;
 use crate::types::{SelfTestCheck, SelfTestReport};
 
+/// Neškodná značka, kterou hledá pravidlo `HH_YARA_SELFTEST` v každé sadě s YARA.
+pub const YARA_SELFTEST_MARKER: &[u8] = b"HH-ANTISHIELD-YARA-SELFTEST-0001";
+pub const YARA_SELFTEST_RULE: &str = "HH_YARA_SELFTEST";
+
 fn check(name: &str, passed: bool, detail: String) -> SelfTestCheck {
     SelfTestCheck {
         name: name.to_string(),
@@ -95,6 +99,31 @@ pub fn run(rules: &RulePack) -> SelfTestReport {
                 "bajtový vzor nalezen i přes hranici bloků".into()
             } else {
                 "bajtový vzor přes hranici bloků nebyl nalezen".into()
+            },
+        ));
+    }
+
+    if let Some(yara) = rules.yara() {
+        // Každá sada s YARA obsahuje neškodné pravidlo HH_YARA_SELFTEST.
+        let mut data = vec![b'A'; 64];
+        data.extend_from_slice(YARA_SELFTEST_MARKER);
+        data.extend_from_slice(&[b'B'; 64]);
+        let mut scanner = yara_x::Scanner::new(yara);
+        let found = scanner.scan(&data).is_ok_and(|results| {
+            results
+                .matching_rules()
+                .any(|rule| rule.identifier() == YARA_SELFTEST_RULE)
+        });
+        checks.push(check(
+            "yara_engine",
+            found,
+            if found {
+                format!(
+                    "engine YARA-X zachytil testovací vzorek (pravidel YARA: {})",
+                    rules.info().yara_rule_count
+                )
+            } else {
+                "engine YARA-X testovací vzorek nezachytil".into()
             },
         ));
     }

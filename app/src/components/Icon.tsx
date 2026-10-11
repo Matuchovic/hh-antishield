@@ -61,6 +61,20 @@ const PATHS = {
     </>
   ),
   doc: <path d="M6 3h9l4 4v14H6zm8 0v5h5M9 13h7m-7 4h7" />,
+  sliders: (
+    <>
+      <path d="M4 6h9m4 0h3M4 12h3m4 0h9M4 18h11m4 0h1" />
+      <circle cx="15" cy="6" r="2" />
+      <circle cx="9" cy="12" r="2" />
+      <circle cx="17" cy="18" r="2" />
+    </>
+  ),
+  bolt: <path d="M13 3 5 14h6l-1 7 8-11h-6z" />,
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  trash: <path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13" />,
+  restore: <path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4" />,
+  warning: <path d="M12 4 2.5 20h19zm0 6v4m0 3v.5" />,
+  sparkle: <path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

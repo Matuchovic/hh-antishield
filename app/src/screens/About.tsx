@@ -1,13 +1,17 @@
-import { describeError, formatDateTime } from "../lib/format";
+import { describeError, formatCount, formatDateTime } from "../lib/format";
 import type { AntiShield } from "../lib/useAntiShield";
 import type { Updater } from "../lib/useUpdater";
 
 const NOTICES: { name: string; license: string }[] = [
-  { name: "Tauri", license: "MIT nebo Apache-2.0" },
+  { name: "Tauri a jeho pluginy", license: "MIT nebo Apache-2.0" },
   { name: "React", license: "MIT" },
-  { name: "RustCrypto sha2", license: "MIT nebo Apache-2.0" },
+  { name: "YARA-X (VirusTotal)", license: "BSD-3-Clause" },
+  { name: "Wasmtime, Cranelift", license: "Apache-2.0 s výjimkou LLVM" },
+  { name: "RustCrypto sha2, rustls, reqwest", license: "MIT nebo Apache-2.0 (ring: ISC)" },
   { name: "ed25519-dalek, curve25519-dalek, subtle", license: "BSD-3-Clause" },
   { name: "aho-corasick, memchr, walkdir", license: "MIT nebo Unlicense" },
+  { name: "zip, sysinfo, plist, chrono", license: "MIT (chrono: MIT nebo Apache-2.0)" },
+  { name: "notify", license: "CC0-1.0" },
   { name: "serde, serde_json, uuid, thiserror", license: "MIT nebo Apache-2.0" },
   { name: "Písmo Barlow (Jeremy Tribby)", license: "SIL Open Font License 1.1" },
 ];
@@ -25,8 +29,9 @@ export function About({ app, updater }: { app: AntiShield; updater: Updater }) {
     <div className="screen">
       <h1>O aplikaci</h1>
       <p className="lede">
-        H&amp;H AntiShield 0.1 je ruční skener souborů. Ochranu v reálném čase, karanténu ani
-        automatické aktualizace zatím nemá.
+        H&amp;H AntiShield kontroluje soubory pravidly YARA a otisky, hlídá vybrané složky, izoluje
+        hrozby do karantény a sám se aktualizuje. Spouštění programů zatím neblokuje; to vyžaduje
+        rozšíření Endpoint Security od Applu.
       </p>
       <dl className="facts">
         <div>
@@ -41,7 +46,7 @@ export function About({ app, updater }: { app: AntiShield; updater: Updater }) {
           <dt>Sada pravidel</dt>
           <dd>
             {info
-              ? `${info.rulePack.packId} ${info.rulePack.version}, ${info.rulePack.ruleCount} pravidel${info.rulePack.testPack ? ", testovací" : ""}`
+              ? `${info.rulePack.packId} ${info.rulePack.version}, ${formatCount(info.rulePack.ruleCount, "pravidlo", "pravidla", "pravidel")}${info.rulePack.testPack ? ", testovací" : ""}`
               : "nenačtena"}
           </dd>
         </div>
@@ -99,6 +104,25 @@ export function About({ app, updater }: { app: AntiShield; updater: Updater }) {
           </p>
         )}
       </section>
+
+      {info?.rulePack.sources.length ? (
+        <section className="panel" aria-labelledby="sources-title">
+          <h2 id="sources-title">Zdroje pravidel</h2>
+          <p className="muted">Pravidla YARA od těchto autorů; licence dovolují komerční použití.</p>
+          <table className="table">
+            <tbody>
+              {info.rulePack.sources.map((source) => (
+                <tr key={source.id}>
+                  <th scope="row">{source.name}</th>
+                  <td>{source.license}</td>
+                  <td>{formatCount(source.ruleCount, "pravidlo", "pravidla", "pravidel")}</td>
+                  <td className="muted">{source.url}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
 
       <section className="panel" aria-labelledby="licenses-title">
         <h2 id="licenses-title">Software třetích stran</h2>

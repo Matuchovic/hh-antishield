@@ -5,7 +5,8 @@ export type Severity = "test_only" | "low" | "medium" | "high" | "critical";
 export type Evidence =
   | { type: "sha256Match"; digestHex: string }
   | { type: "bytePattern"; offset: number; length: number }
-  | { type: "eicarStandard" };
+  | { type: "eicarStandard" }
+  | { type: "yaraMatch"; source: string; rule: string; author: string | null; reference: string | null };
 
 export interface FileIdentity {
   device: number;
@@ -29,7 +30,13 @@ export interface Finding {
   evidence: Evidence[];
   identity: FileIdentity;
   changedDuringRead: boolean;
+  archiveEntry: string | null;
+  origin: FindingOrigin | null;
 }
+
+export type FindingOrigin =
+  | { type: "process"; pid: number; name: string }
+  | { type: "startupItem"; location: string; label: string };
 
 export type SkipReason =
   | { type: "symlink" }
@@ -77,6 +84,16 @@ export interface RulePackInfo {
   createdAtUnix: number;
   expiresAtUnix: number;
   expired: boolean;
+  yaraRuleCount: number;
+  sources: RuleSourceInfo[];
+}
+
+export interface RuleSourceInfo {
+  id: string;
+  name: string;
+  url: string;
+  license: string;
+  ruleCount: number;
 }
 
 export interface ScanSummary {
@@ -88,6 +105,7 @@ export interface ScanSummary {
   filesScanned: number;
   bytesScanned: number;
   archivesNotInspected: number;
+  yaraIncomplete: number;
   findings: Finding[];
   skippedTotal: number;
   skippedByReason: SkipCount[];
@@ -152,7 +170,7 @@ export interface ComponentStatus {
   state: ComponentState;
 }
 
-export type ProtectionLevel = "notReady" | "manualScanOnly" | "protected";
+export type ProtectionLevel = "notReady" | "manualScanOnly" | "monitored" | "protected";
 
 export interface ProtectionSummary {
   level: ProtectionLevel;
@@ -179,3 +197,85 @@ export interface UpdateProgress {
   downloaded: number;
   total: number | null;
 }
+
+export interface QuarantineItem {
+  id: string;
+  originalPath: string;
+  sha256: string;
+  size: number;
+  quarantinedAtMs: number;
+  ruleId: string;
+  ruleName: string;
+  severity: Severity;
+  testOnly: boolean;
+}
+
+export interface RemediationReport {
+  path: string;
+  quarantined: QuarantineItem | null;
+  processTerminated: boolean;
+  startupDisabled: boolean;
+  problems: string[];
+}
+
+export type PostureState = "ok" | "warning" | "unknown";
+
+export interface PostureCheck {
+  id: string;
+  title: string;
+  state: PostureState;
+  detail: string;
+  advice: string;
+}
+
+export type Schedule = "off" | "daily" | "weekly";
+export type PresetScan = "quick" | "full";
+
+export interface Settings {
+  protectionEnabled: boolean;
+  watchFolders: string[];
+  autoQuarantine: boolean;
+  notifications: boolean;
+  rulesAutoUpdate: boolean;
+  schedule: Schedule;
+  scheduleHour: number;
+  scheduleWeekday: number;
+  scheduleScan: PresetScan;
+  sounds: boolean;
+  intro: boolean;
+  reducedMotion: boolean;
+  launchAtLogin: boolean;
+  keepRunningInBackground: boolean;
+}
+
+export type DetectionAction =
+  | { type: "quarantined"; itemId: string }
+  | { type: "detected" }
+  | { type: "failed"; reason: string };
+
+export interface Detection {
+  atMs: number;
+  finding: Finding;
+  action: DetectionAction;
+}
+
+export interface RulesStatus {
+  lastCheckMs: number | null;
+  lastSuccessMs: number | null;
+  lastError: string | null;
+  checking: boolean;
+}
+
+export interface RuntimeInfo {
+  watched: string[];
+  watchingSinceMs: number | null;
+  watchError: string | null;
+  accessDenied: string | null;
+  detections: Detection[];
+  rules: RulesStatus;
+  lastScheduledRunMs: number | null;
+}
+
+export type RuleUpdateOutcome =
+  | { type: "installed"; rulePack: RulePackInfo }
+  | { type: "upToDate"; rulePack: RulePackInfo };

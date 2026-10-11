@@ -1,5 +1,5 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "pack_id": "hh-antishield-test",
   "sequence": 1,
   "version": "2026.10.10-test.1",
@@ -66,6 +66,15 @@
         "cs": "SHA-256 souboru se shoduje se syntetickým testovacím vzorkem H&H. Vzorek je náhodná neškodná data.",
         "en": "The file's SHA-256 matches an H&H synthetic test sample made of harmless random data."
       }
+    }
+  ],
+  "yara": [
+    {
+      "id": "hh",
+      "name": "H&H AntiShield",
+      "url": "https://github.com/Matuchovic/hh-antishield",
+      "license": "LicenseRef-HH-Proprietary",
+      "source": "// H&H AntiShield: neškodné pravidlo pro self-test enginu YARA.\n// Je v každé sadě pravidel s YARA; engine ho ověřuje při startu.\nrule HH_YARA_SELFTEST {\n    meta:\n        description = \"H&H AntiShield self-test marker (harmless)\"\n        author = \"H&H\"\n        hh_test_only = true\n    strings:\n        $marker = \"HH-ANTISHIELD-YARA-SELFTEST-0001\"\n    condition:\n        $marker\n}\n"
     }
   ]
 }

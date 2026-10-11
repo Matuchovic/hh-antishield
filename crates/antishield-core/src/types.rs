@@ -1,6 +1,7 @@
 //! Veřejné datové typy. Jsou to čistá data bez ukazatelů, takže je jde poslat
 //! přes IPC (Tauri) nebo později přes XPC beze změny.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,10 @@ pub struct ScanLimits {
     pub max_depth: usize,
     /// Počet pracovních vláken.
     pub worker_threads: usize,
+    /// Pravidla YARA dostanou soubory do této velikosti (celý obsah je v paměti).
+    pub max_yara_file_bytes: u64,
+    /// Nejdelší doba kontroly jednoho souboru pravidly YARA.
+    pub yara_timeout_ms: u64,
 }
 
 impl Default for ScanLimits {
@@ -25,6 +30,8 @@ impl Default for ScanLimits {
             max_file_size_bytes: 4 * 1024 * 1024 * 1024,
             stall_timeout_ms: 30_000,
             max_depth: 64,
+            max_yara_file_bytes: 32 * 1024 * 1024,
+            yara_timeout_ms: 20_000,
             worker_threads: std::thread::available_parallelism()
                 .map(|n| n.get().saturating_sub(1).clamp(2, 4))
                 .unwrap_or(2),
@@ -40,6 +47,8 @@ pub struct ScanRequest {
     /// Nepřecházet na jiné svazky pod kořenem.
     pub stay_on_volume: bool,
     pub limits: ScanLimits,
+    /// Odkud cíl pochází (proces, položka po spuštění). Klíčem je kanonická cesta souboru.
+    pub origins: HashMap<PathBuf, FindingOrigin>,
 }
 
 impl ScanRequest {
@@ -48,8 +57,21 @@ impl ScanRequest {
             roots,
             stay_on_volume: true,
             limits: ScanLimits::default(),
+            origins: HashMap::new(),
         }
     }
+}
+
+/// Souvislost nálezu: běžící proces nebo položka spouštěná po přihlášení.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum FindingOrigin {
+    Process { pid: u32, name: String },
+    StartupItem { location: String, label: String },
 }
 
 /// Závažnost pravidla.
@@ -78,6 +100,14 @@ pub enum Evidence {
     BytePattern { offset: u64, length: u32 },
     /// Soubor odpovídá oficiální definici testovacího souboru EICAR.
     EicarStandard,
+    /// Soubor splnil podmínky pravidla YARA.
+    YaraMatch {
+        /// Zdroj pravidel (jmenný prostor), viz `RulePackInfo::sources`.
+        source: String,
+        rule: String,
+        author: Option<String>,
+        reference: Option<String>,
+    },
 }
 
 /// Identita souboru v okamžiku čtení. Slouží k odhalení změny během kontroly
@@ -114,6 +144,9 @@ pub struct Finding {
     pub identity: FileIdentity,
     /// Soubor se během čtení změnil, nález nemusí odpovídat aktuálnímu obsahu.
     pub changed_during_read: bool,
+    /// Cesta uvnitř archivu, pokud nález pochází z jeho obsahu.
+    pub archive_entry: Option<String>,
+    pub origin: Option<FindingOrigin>,
 }
 
 /// Proč položka nebyla zkontrolována.
@@ -220,6 +253,21 @@ pub struct RulePackInfo {
     pub created_at_unix: i64,
     pub expires_at_unix: i64,
     pub expired: bool,
+    /// Kolik z `rule_count` jsou pravidla YARA.
+    pub yara_rule_count: u32,
+    /// Zdroje pravidel YARA s licencí (atribuce autorům).
+    pub sources: Vec<RuleSourceInfo>,
+}
+
+/// Zdroj pravidel YARA v sadě.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleSourceInfo {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub license: String,
+    pub rule_count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -234,6 +282,9 @@ pub struct ScanSummary {
     pub bytes_scanned: u64,
     /// Archivy se ve v0.1 nerozbalují; tolik jich bylo zkontrolováno jen jako celek.
     pub archives_not_inspected: u64,
+    /// Soubory zkontrolované jen otisky a vzory, bez pravidel YARA
+    /// (větší než limit nebo kontrola YARA nedoběhla).
+    pub yara_incomplete: u64,
     pub findings: Vec<Finding>,
     pub skipped_total: u64,
     pub skipped_by_reason: Vec<SkipCount>,

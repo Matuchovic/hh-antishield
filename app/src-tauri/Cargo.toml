@@ -19,9 +19,16 @@ tauri-build = { version = "2.7.2", features = [] }
 antishield-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2.12.3", features = [] }
+tauri = { version = "2.12.3", features = ["tray-icon"] }
 tauri-plugin-dialog = "2.8.2"
 tauri-plugin-updater = "2.13.3"
+tauri-plugin-notification = "2.6.0"
+tauri-plugin-autostart = "2.7.0"
+tauri-plugin-single-instance = "2.5.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "system-proxy", "http2"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1.53.2", features = ["time"] }
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 uuid.workspace = true
 
 [lints]

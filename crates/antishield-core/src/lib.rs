@@ -16,17 +16,24 @@
 pub mod audit;
 pub mod engine;
 pub mod error;
+pub mod inspect;
 pub mod matcher;
 mod platform;
+pub mod posture;
+pub mod quarantine;
 pub mod rules;
 pub mod scan;
 pub mod selftest;
 pub mod status;
+pub mod system;
 pub mod testvectors;
 pub mod types;
+pub mod watch;
 
-pub use engine::{Engine, EngineConfig, RuleSource};
+pub use engine::{Engine, EngineConfig, RemediationReport, RuleSource, RuleUpdateOutcome};
 pub use error::EngineError;
+pub use inspect::InspectResult;
+pub use quarantine::QuarantineItem;
 pub use scan::{ScanHandle, ScanObserver};
 pub use types::*;
 
@@ -34,7 +41,7 @@ pub use types::*;
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Aktuální čas v milisekundách od epochy UNIX.
-pub(crate) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))

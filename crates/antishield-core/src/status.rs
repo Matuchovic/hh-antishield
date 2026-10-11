@@ -78,9 +78,13 @@ pub struct ComponentStatus {
 pub enum ProtectionLevel {
     /// Engine nebo pravidla nejsou připravené.
     NotReady,
-    /// Funguje jen ruční kontrola (stav verze 0.1).
+    /// Funguje jen ruční kontrola.
     ManualScanOnly,
-    /// Běží ochrana v reálném čase i aktualizace.
+    /// Hlídání souborů a aktualizace pravidel běží, spouštění programů se
+    /// ale neblokuje (bez Endpoint Security / ovladače).
+    Monitored,
+    /// Plná ochrana: navíc blokování na úrovni systému (webová ochrana).
+    /// Ve verzi 0.2 nedosažitelné, protože webová ochrana není hotová.
     Protected,
 }
 
@@ -104,10 +108,13 @@ pub fn summarize_protection(components: &[ComponentStatus]) -> ProtectionLevel {
     if !ready {
         return ProtectionLevel::NotReady;
     }
-    if running(ComponentKind::RealTimeProtection) && running(ComponentKind::Updates) {
+    if !(running(ComponentKind::RealTimeProtection) && running(ComponentKind::Updates)) {
+        return ProtectionLevel::ManualScanOnly;
+    }
+    if running(ComponentKind::WebProtection) {
         ProtectionLevel::Protected
     } else {
-        ProtectionLevel::ManualScanOnly
+        ProtectionLevel::Monitored
     }
 }
 
@@ -127,13 +134,14 @@ mod tests {
 
     /// Projde všechny kombinace stavů klíčových komponent.
     #[test]
-    fn protected_only_with_realtime_and_updates() {
+    fn protected_only_with_realtime_updates_and_web() {
         let keys = [
             ComponentKind::DetectionEngine,
             ComponentKind::RulePack,
             ComponentKind::OnDemandScan,
             ComponentKind::RealTimeProtection,
             ComponentKind::Updates,
+            ComponentKind::WebProtection,
         ];
         let all = states();
         let total = all.len().pow(keys.len() as u32);
@@ -150,10 +158,17 @@ mod tests {
             let level = summarize_protection(&components);
             let rt = components[3].state.is_running();
             let updates = components[4].state.is_running();
+            let web = components[5].state.is_running();
             if level == ProtectionLevel::Protected {
                 assert!(
-                    rt && updates,
-                    "protected without realtime/updates: {components:?}"
+                    rt && updates && web,
+                    "protected without all layers: {components:?}"
+                );
+            }
+            if level == ProtectionLevel::Monitored {
+                assert!(
+                    rt && updates && !web,
+                    "monitored without watch/updates: {components:?}"
                 );
             }
             let ready = components[..3].iter().all(|c| c.state.is_running());

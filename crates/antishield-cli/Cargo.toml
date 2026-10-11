@@ -21,10 +21,12 @@ antishield-core.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 hex.workspace = true
+yara-x.workspace = true
 getrandom = { version = "0.3", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+antishield-core = { workspace = true, features = ["signing"] }
 
 [lints]
 workspace = true

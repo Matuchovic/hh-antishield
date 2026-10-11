@@ -29,8 +29,27 @@ env:
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
+  check:
+    name: Kontrola verze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Stejná verze podruhé vydat nejde; zastavit hned, ne až po sestavení.
+      - name: Verze ještě není vydaná
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(node -p "require('./app/package.json').version")
+          if gh release view "v$VER" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Verze $VER už je vydaná. Nejdřív slučte do main PR se zvýšenou verzí, pak spusťte Release znovu."
+            exit 1
+          fi
+          echo "Vydá se verze $VER."
+
   macos:
     name: macOS DMG (Apple Silicon + Intel)
+    needs: check
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -76,6 +95,7 @@ jobs:
 
   windows:
     name: Windows instalátor
+    needs: check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5

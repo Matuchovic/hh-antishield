@@ -20,6 +20,8 @@ allow = [
     "MPL-2.0",
     # ring, rustls-webpki, untrusted (TLS pro aktualizace)
     "ISC",
+    # notify (hlídání složek)
+    "CC0-1.0",
 ]
 confidence-threshold = 0.93
 
@@ -32,6 +34,18 @@ ignore = [
     # Nevyužívaná makra gtk-rs (glib-macros, gtk3-macros). Jen pro vývojový build
     # na Linuxu, v aplikaci pro macOS a Windows nejsou. Zranitelnost to není.
     { id = "RUSTSEC-2024-0370", reason = "unmaintained proc macro used only by the Linux GTK stack (dev builds)" },
+    # yara-x 1.21 (nejnovější) používá wasmtime 45. Opravy existují jen pro jiné
+    # řady wasmtime. Chyby se týkají WASI, component modelu nebo více enginů;
+    # yara-x spouští jen vlastní WASM moduly přeložené z našich podepsaných
+    # pravidel, bez WASI a bez komponent. Data souborů kód nenahrávají.
+    { id = "RUSTSEC-2026-0222", reason = "single wasmtime engine inside yara-x; no cross-engine stores" },
+    { id = "RUSTSEC-2026-0269", reason = "WASI filesystem is not used by yara-x" },
+    { id = "RUSTSEC-2026-0316", reason = "component model is not used by yara-x" },
+    { id = "RUSTSEC-2026-0327", reason = "component model is not used by yara-x" },
+    # rsa v yara-x jen ověřuje podpisy PE (veřejný klíč); časový útok Marvin
+    # se týká dešifrování soukromým klíčem.
+    { id = "RUSTSEC-2023-0071", reason = "rsa only verifies Authenticode signatures with public keys" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode is unmaintained but not vulnerable; used inside yara-x" },
 ]
 
 [bans]

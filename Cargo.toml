@@ -5,9 +5,9 @@ members = ["crates/antishield-core", "crates/antishield-cli", "app/src-tauri"]
 default-members = ["crates/antishield-core", "crates/antishield-cli"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
-rust-version = "1.90"
+rust-version = "1.95"
 license = "LicenseRef-HH-Proprietary"
 publish = false
 authors = ["H&H"]
@@ -27,6 +27,12 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 uuid = { version = "1.28.0", features = ["v4"] }
 walkdir = "2.5.0"
+yara-x = "1.21.0"
+zip = { version = "9.0.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+notify = "8.2.0"
+plist = "1.10.1"
+winreg = "0.56.0"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

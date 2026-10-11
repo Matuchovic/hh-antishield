@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quarantine-list"
+description = "Enables the quarantine_list command without any pre-configured scope."
+commands.allow = ["quarantine_list"]
+
+[[permission]]
+identifier = "deny-quarantine-list"
+description = "Denies the quarantine_list command without any pre-configured scope."
+commands.deny = ["quarantine_list"]

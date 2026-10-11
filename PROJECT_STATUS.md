@@ -1,53 +1,65 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.1.1)
+Aktualizováno: 2026-10-11 (v0.2.0, PR čeká na CI a sloučení)
 
 ## Stav
-v0.1.1 vydána: https://github.com/Matuchovic/hh-antishield/releases/tag/v0.1.1
-(DMG universal, Windows NSIS, podepsané aktualizace, latest.json). PR #1
-sloučený do `main`. Aplikace hledá aktualizace po startu, každých 5 min
-a při návratu do okna; instalace přes banner po potvrzení uživatele.
-Rozhraní podle mockupu (logo H&H Security, animace, pravdivý obsah).
-DMG 0.1.0 ověřen na skutečném Macu (okno, self-test).
+- v0.1.1 a v0.1.2 vydány (GitHub Releases, podepsané aktualizace přes banner).
+- v0.2.0 hotová ve větvi `claude/v0.2-detection`: YARA-X a produkční pravidla
+  z YARA Forge, ZIP, hlídání složek v reálném čase, karanténa a vyčištění
+  (proces, položka po přihlášení), rychlá/úplná/plánovaná kontrola, bezpečnost
+  systému (jen čtení), nastavení, lišta, spuštění po přihlášení, oznámení,
+  animované jádro, úvodní znělka a zvuky.
+- Úroveň „hlídaný“ (Monitored) jen při běžícím hlídání a čerstvých
+  pravidlech; „Chráněno“ zatím nedosažitelné (chybí blokování spouštění).
 
 ## Architektura
-- `crates/antishield-core` – engine: pravidla podepsaná Ed25519, streamový
-  matcher (SHA-256, bajtové vzory, EICAR), bezpečný skener, audit s řetězením
-  SHA-256, stav komponent, self-test.
-- `crates/antishield-cli` – `antishield` (scan, selftest, rules, audit verify).
-- `app/` – Tauri 2 + React; 8 povolených příkazů, přísná CSP, App Sandbox.
+- `crates/antishield-core` – engine: podepsaná pravidla (SHA-256, vzory,
+  YARA-X v namespacích s licencí), skener se ZIP, karanténa, náprava, hlídání
+  složek, procesy a položky po spuštění, stav systému, audit, self-test.
+- `crates/antishield-cli` – `antishield` (scan, selftest, rules build/sign/
+  verify, audit verify).
+- `app/` – Tauri 2 + React; 21 povolených příkazů, přísná CSP, služby na
+  pozadí (hlídání, pravidla po 6 h, plánovač), lišta, single-instance.
 
 ## Rozhodnutí
-- Tauri místo nativního SwiftUI; jedna aplikace pro macOS a Windows.
-- Distribuce bez App Store: DMG z webu (ad-hoc podpis, jednou „Přesto
-  otevřít“), Windows NSIS pro aktuálního uživatele (nepodepsaný).
+- Tauri, jedna aplikace pro macOS a Windows; distribuce mimo App Store.
 - Samostatný projekt: žádný vliv na hhsecurity a hhcloud.
-- Bundle ID `cz.hh.antishield` (dočasné), macOS min. 12.0.
-- Aktualizace přes banner (tauri-plugin-updater, podpis Ed25519, GitHub Releases,
-  `latest.json`); App Sandbox kvůli tomu vypnutý (rozhodl uživatel 2026-10-11).
-  Soukromý klíč updateru jen v GitHub Secrets `TAURI_SIGNING_*` + záloha u uživatele.
+- Aktualizace aplikace přes banner (GitHub Releases), App Sandbox vypnutý.
+- Pravidla: YARA Forge core, jen licence MIT/Apache/BSD/DRL/CC0/CC-BY/
+  Unlicense; podpis klíčem `hh-rules-2026-10` (secret `RULES_SIGNING_KEY`),
+  vydání `rules` (prerelease, ne „latest“).
+- Animace jen transform/opacity, bez filtru blur a bez `will-change` na
+  animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
-## Testy (2026-10-11)
-CI: 48 testů jádra na Linuxu, macOS a Windows, clippy `-D warnings`, rustfmt,
-cargo deny, testy a build UI, překlad aplikace. Release: kontrola podpisu
-a entitlements DMG, self-test aplikace na macOS i Windows. Lokálně navíc
-spuštění aplikace pod Xvfb.
+## Testy (2026-10-11, lokálně)
+- Rust: 74 testů (jádro 65, CLI 4, aplikace 5), clippy `-D warnings`,
+  rustfmt; self-test aplikace `--self-test` prošel.
+- Produkční řetězec pravidel lokálně: build → podpis produkčním klíčem →
+  verify → self-test → nález pravidlem z Forge. Odhalil chybu: `rules sign`
+  kontroloval podpis jako testovací klíč (opraveno + testy).
+- UI: 10 testů vitest, typecheck, build; snímky všech obrazovek v Chromiu
+  s náhradou IPC; skutečná aplikace pod Xvfb (WebKitGTK) vykreslí přehled.
+- CI v PR #3: jádro zelené na Linuxu, macOS i Windows (macOS odhalil
+  odmítnutí cest přes `/var` → `/private/var` při kontrole jednoho souboru;
+  opraveno + test).
+- Na macOS se při prvním spuštění zeptá systém na přístup ke Staženým
+  souborům, Ploše a Dokumentům; bez povolení aplikace hlásí omezené hlídání.
 
 ## Známé problémy
-- Aplikace zatím nespuštěna na skutečném Windows.
+- Aplikace zatím nespuštěna na skutečném Windows; 0.2 ani na Macu.
 - Repozitář je veřejný – zvážit přepnutí na soukromý.
-- Artefakty z Actions nejdou stáhnout z cloudového prostředí Claude (blob storage blokovaná).
-- Archivy se nerozbalují (jen se započítají).
+- Z cloudového prostředí nejde stahovat artefakty, tagovat ani nastavit secrets.
 - Balíčky nejsou podepsané Developer ID ani pro Windows.
 - Architektonický dokument (Claude Docs) ještě popisuje nativní variantu.
-- Soukromý testovací klíč `hh-test-2026-10` je jen v dočasném úložišti
-  session; při ztrátě vygenerovat nový a vyměnit veřejný klíč v `rules/keys`.
+- Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
+  úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 
 ## Vydání
 Zvýšit verzi (`app/package.json`, `tauri.conf.json`, `Cargo.toml`), sloučit
 do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish“.
-Vydání potvrzuje vždy člověk; tag z cloudového prostředí vytvořit nejde.
+Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Nainstalovat 0.1.1 na Macy ručně, pak vydat 0.1.2 a ověřit celý průběh
-aktualizace přes banner.
+Zelené CI v PR → sloučit → secret `RULES_SIGNING_KEY` → Rules (publish) →
+Release 0.2.0 (publish) → ověřit na Macu aktualizaci přes banner, hlídání
+Stažených souborů (EICAR) a vyčištění.

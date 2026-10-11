@@ -7,7 +7,6 @@
 //! Engine soubory jen čte. Nic nemaže, nepřesouvá ani nespouští.
 
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,12 +20,12 @@ use walkdir::WalkDir;
 
 use crate::audit::AuditLog;
 use crate::error::EngineError;
-use crate::matcher::ContentMatcher;
-use crate::platform::{self, OpenError};
+use crate::inspect::{CHUNK_SIZE, FileOutcome, Hooks, inspect_file};
+use crate::platform;
 use crate::rules::RulePack;
 use crate::types::{
-    Finding, ScanEvent, ScanLimits, ScanOutcome, ScanProgress, ScanRequest, ScanSummary, SkipCount,
-    SkipReason, SkippedItem,
+    Finding, FindingOrigin, ScanEvent, ScanLimits, ScanOutcome, ScanProgress, ScanRequest,
+    ScanSummary, SkipCount, SkipReason, SkippedItem,
 };
 use crate::{ENGINE_VERSION, now_ms};
 
@@ -70,7 +69,6 @@ pub(crate) struct ScanContext {
     pub running: Arc<AtomicBool>,
 }
 
-const CHUNK_SIZE: usize = 1024 * 1024;
 const QUEUE_CAPACITY: usize = 512;
 const TICK: Duration = Duration::from_millis(50);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -150,6 +148,7 @@ pub(crate) fn spawn_scan(
                     files_scanned: 0,
                     bytes_scanned: 0,
                     archives_not_inspected: 0,
+                    yara_incomplete: 0,
                     findings: Vec::new(),
                     skipped_total: 0,
                     skipped_by_reason: Vec::new(),
@@ -187,6 +186,7 @@ enum Msg {
         item_id: u64,
         scanned: bool,
         archive: bool,
+        yara_incomplete: bool,
     },
     WalkerDone,
 }
@@ -236,6 +236,7 @@ struct Shared {
     limits: ScanLimits,
     stay_on_volume: bool,
     rules: Arc<RulePack>,
+    origins: HashMap<PathBuf, FindingOrigin>,
 }
 
 impl Shared {
@@ -261,6 +262,7 @@ struct Tally {
     skipped_sample: Vec<SkippedItem>,
     files_scanned: u64,
     archives: u64,
+    yara_incomplete: u64,
     done_items: u64,
 }
 
@@ -314,6 +316,7 @@ fn run_scan(
         limits: request.limits.clone(),
         stay_on_volume: request.stay_on_volume,
         rules: ctx.rules.clone(),
+        origins: request.origins.clone(),
     });
 
     let (work_tx, work_rx) = mpsc::sync_channel::<WorkItem>(QUEUE_CAPACITY);
@@ -402,12 +405,14 @@ fn run_scan(
                 item_id,
                 scanned,
                 archive,
+                yara_incomplete,
             }) => {
                 // Pozdní výsledek položky, kterou už koordinátor odepsal jako zaseknutou.
                 if !abandoned.remove(&item_id) {
                     tally.done_items += 1;
                     tally.files_scanned += u64::from(scanned);
                     tally.archives += u64::from(archive);
+                    tally.yara_incomplete += u64::from(yara_incomplete);
                 }
             }
             Ok(Msg::WalkerDone) | Err(RecvTimeoutError::Disconnected) => walker_done = true,
@@ -529,6 +534,7 @@ fn run_scan(
         files_scanned: tally.files_scanned,
         bytes_scanned: shared.bytes.load(Ordering::Relaxed),
         archives_not_inspected: tally.archives,
+        yara_incomplete: tally.yara_incomplete,
         findings: tally.findings,
         skipped_total: tally.skipped_total,
         skipped_by_reason,
@@ -546,6 +552,7 @@ fn run_scan(
             "findings": summary.findings.len(),
             "skipped": summary.skipped_total,
             "archivesNotInspected": summary.archives_not_inspected,
+            "yaraIncomplete": summary.yara_incomplete,
             "durationMs": summary.finished_at_ms.saturating_sub(started_at_ms),
         }),
         true,
@@ -694,18 +701,20 @@ fn send_work(shared: &Shared, tx: &SyncSender<WorkItem>, mut item: WorkItem) -> 
     }
 }
 
-enum FileOutcome {
-    Scanned {
-        findings: Vec<Finding>,
-        archive: bool,
-    },
-    Skipped(SkipReason),
-    Cancelled,
+fn new_yara_scanner(shared: &Shared) -> Option<yara_x::Scanner<'_>> {
+    shared.rules.yara().map(|rules| {
+        let mut scanner = yara_x::Scanner::new(rules);
+        scanner.set_timeout(Duration::from_millis(shared.limits.yara_timeout_ms));
+        scanner
+    })
 }
 
 fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slot: &Slot) {
     platform::prepare_scan_thread();
     let mut buffer = vec![0u8; CHUNK_SIZE];
+    // Jeden skener YARA na vlákno: jeho vytvoření není zadarmo.
+    let mut yara = new_yara_scanner(shared);
+    let mut content = Vec::new();
     loop {
         if slot.abandoned.load(Ordering::SeqCst) || shared.abort.load(Ordering::SeqCst) {
             return;
@@ -727,6 +736,7 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
                 item_id: item.id,
                 scanned: false,
                 archive: false,
+                yara_incomplete: false,
             });
             continue;
         }
@@ -737,8 +747,19 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
         slot.item.store(item.id, Ordering::SeqCst);
 
         let outcome = catch_unwind(AssertUnwindSafe(|| {
-            scan_file(shared, &item.path, &mut buffer, slot)
+            scan_file(
+                shared,
+                &item.path,
+                &mut buffer,
+                &mut content,
+                yara.as_mut(),
+                slot,
+            )
         }));
+        if outcome.is_err() {
+            // Po pádu nemusí být stav skeneru konzistentní.
+            yara = new_yara_scanner(shared);
+        }
 
         // Kdo položku první uvolní, ten ji vlastní. Pokud ji koordinátor mezitím
         // odepsal jako zaseknutou, vlákno skončí a výsledek zahodí.
@@ -752,21 +773,25 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
         }
 
         let display = item.path.display().to_string();
-        let (scanned, archive) = match outcome {
-            Ok(FileOutcome::Scanned { findings, archive }) => {
+        let (scanned, archive, yara_incomplete) = match outcome {
+            Ok(FileOutcome::Scanned {
+                findings,
+                archive,
+                yara_incomplete,
+            }) => {
                 for finding in findings {
                     let _ = tx.send(Msg::Finding(Box::new(finding)));
                 }
-                (true, archive)
+                (true, archive, yara_incomplete)
             }
             Ok(FileOutcome::Skipped(reason)) => {
                 let _ = tx.send(Msg::Skipped(SkippedItem {
                     path: display,
                     reason,
                 }));
-                (false, false)
+                (false, false, false)
             }
-            Ok(FileOutcome::Cancelled) => (false, false),
+            Ok(FileOutcome::Cancelled) => (false, false, false),
             Err(panic) => {
                 let message = panic
                     .downcast_ref::<&str>()
@@ -777,83 +802,45 @@ fn worker(shared: &Shared, rx: &Mutex<Receiver<WorkItem>>, tx: &Sender<Msg>, slo
                     path: display,
                     reason: SkipReason::InternalError { message },
                 }));
-                (false, false)
+                (false, false, false)
             }
         };
         let _ = tx.send(Msg::Done {
             item_id: item.id,
             scanned,
             archive,
+            yara_incomplete,
         });
     }
 }
 
-fn scan_file(shared: &Shared, path: &Path, buffer: &mut [u8], slot: &Slot) -> FileOutcome {
-    let limits = &shared.limits;
-    let (mut file, meta) = match platform::open_regular(path) {
-        Ok(opened) => opened,
-        Err(OpenError::NotRegular) => return FileOutcome::Skipped(SkipReason::NotRegularFile),
-        Err(OpenError::Io(err)) => return FileOutcome::Skipped(platform::classify_io_error(&err)),
-    };
-    let before = platform::identity(&meta);
-    if before.size > limits.max_file_size_bytes {
-        return FileOutcome::Skipped(SkipReason::TooLarge {
-            size: before.size,
-            limit: limits.max_file_size_bytes,
-        });
-    }
-
-    let mut matcher = ContentMatcher::new(&shared.rules);
-    loop {
-        if shared.stopped() {
-            return FileOutcome::Cancelled;
+fn scan_file(
+    shared: &Shared,
+    path: &Path,
+    buffer: &mut [u8],
+    content: &mut Vec<u8>,
+    yara: Option<&mut yara_x::Scanner<'_>>,
+    slot: &Slot,
+) -> FileOutcome {
+    let stopped = || shared.stopped();
+    let progress = |read: u64| {
+        if read > 0 {
+            shared.bytes.fetch_add(read, Ordering::Relaxed);
         }
-        let read = match file.read(buffer) {
-            Ok(0) => break,
-            Ok(n) => n,
-            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(err) => return FileOutcome::Skipped(platform::classify_io_error(&err)),
-        };
-        matcher.feed(&buffer[..read]);
-        shared.bytes.fetch_add(read as u64, Ordering::Relaxed);
         slot.last_progress_ms
             .store(shared.now_ms(), Ordering::SeqCst);
-        if matcher.bytes_seen() > limits.max_file_size_bytes {
-            return FileOutcome::Skipped(SkipReason::TooLarge {
-                size: matcher.bytes_seen(),
-                limit: limits.max_file_size_bytes,
-            });
-        }
-    }
-
-    let after = file.metadata().ok().map(|m| platform::identity(&m));
-    let changed = matcher.bytes_seen() != before.size
-        || after.is_none_or(|after| !platform::same_version(&before, &after));
-    let verdict = matcher.finish();
-    let sha256 = hex::encode(verdict.sha256);
-    let display = path.display().to_string();
-    let findings = verdict
-        .matches
-        .iter()
-        .map(|m| {
-            let rule = shared.rules.rule(m.rule_index);
-            Finding {
-                path: display.clone(),
-                sha256: sha256.clone(),
-                rule_id: rule.id.clone(),
-                rule_name: rule.name.clone(),
-                rule_version: rule.version,
-                rule_description: rule.description.cs.clone(),
-                severity: rule.severity,
-                test_only: rule.test_only,
-                evidence: vec![m.evidence.clone()],
-                identity: before,
-                changed_during_read: changed,
-            }
-        })
-        .collect();
-    FileOutcome::Scanned {
-        findings,
-        archive: verdict.archive.is_some(),
-    }
+    };
+    inspect_file(
+        &shared.rules,
+        &shared.limits,
+        path,
+        shared.origins.get(path),
+        buffer,
+        content,
+        yara,
+        &Hooks {
+            stopped: &stopped,
+            progress: &progress,
+        },
+    )
 }

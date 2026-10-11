@@ -17,6 +17,8 @@ use antishield_core::{
 };
 use clap::{Parser, Subcommand};
 
+mod forge;
+
 #[derive(Parser)]
 #[command(
     name = "antishield",
@@ -76,6 +78,30 @@ enum Command {
 enum RulesCommand {
     /// Ověří podpis a obsah sady pravidel zabudovanými klíči.
     Verify { pack: PathBuf, signature: PathBuf },
+    /// Sestaví produkční sadu z balíčku YARA Forge (jen licence vhodné ke komerčnímu použití).
+    Build {
+        /// Základní sada (klasická pravidla, EICAR).
+        #[arg(long)]
+        base: PathBuf,
+        /// Neškodné pravidlo pro self-test YARA.
+        #[arg(long)]
+        selftest: PathBuf,
+        /// Balíček YARA Forge (yara-rules-core.yar).
+        #[arg(long)]
+        forge: PathBuf,
+        #[arg(long)]
+        sequence: u64,
+        #[arg(long)]
+        version: String,
+        /// Platnost sady ve dnech.
+        #[arg(long, default_value_t = 45)]
+        valid_days: i64,
+        /// Selhat, když sada obsahuje méně pravidel YARA.
+        #[arg(long, default_value_t = 1)]
+        min_yara_rules: usize,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Vygeneruje nový pár klíčů Ed25519 (soukromý klíč nikdy necommitovat).
     #[cfg(feature = "signing")]
     Keygen {
@@ -296,6 +322,25 @@ fn rules(command: &RulesCommand) -> Result<ExitCode, Box<dyn std::error::Error>>
             println!("{}", serde_json::to_string_pretty(pack.info())?);
             Ok(ExitCode::SUCCESS)
         }
+        RulesCommand::Build {
+            base,
+            selftest,
+            forge,
+            sequence,
+            version,
+            valid_days,
+            min_yara_rules,
+            out,
+        } => build_rules(
+            base,
+            selftest,
+            forge,
+            *sequence,
+            version,
+            *valid_days,
+            *min_yara_rules,
+            out,
+        ),
         #[cfg(feature = "signing")]
         RulesCommand::Keygen { key_id, out_dir } => keygen(key_id, out_dir),
         #[cfg(feature = "signing")]
@@ -306,6 +351,53 @@ fn rules(command: &RulesCommand) -> Result<ExitCode, Box<dyn std::error::Error>>
             out,
         } => sign(pack, key, key_id, out),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_rules(
+    base: &std::path::Path,
+    selftest: &std::path::Path,
+    forge_file: &std::path::Path,
+    sequence: u64,
+    version: &str,
+    valid_days: i64,
+    min_yara_rules: usize,
+    out: &std::path::Path,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let base: serde_json::Value = serde_json::from_slice(&std::fs::read(base)?)?;
+    let selftest = std::fs::read_to_string(selftest)?;
+    let forge_text = std::fs::read_to_string(forge_file)?;
+    let (pack, stats) = forge::build_pack(
+        &base,
+        &selftest,
+        &forge_text,
+        sequence,
+        version,
+        now_unix(),
+        valid_days,
+    )?;
+    let total: usize = stats.included.iter().map(|(_, _, n)| n).sum();
+    println!("Zdroje v sadě ({}):", stats.included.len());
+    for (name, license, count) in &stats.included {
+        println!("  {name}: {count} pravidel, licence {license}");
+    }
+    println!(
+        "Vynecháno kvůli licenci ({}):",
+        stats.excluded_license.len()
+    );
+    for (name, url) in &stats.excluded_license {
+        println!("  {name} ({url})");
+    }
+    println!("Pravidla, která YARA-X nepřeložil: {}", stats.failed_rules);
+    println!("Pravidel YARA celkem: {total}");
+    if total < min_yara_rules {
+        return Err(format!("too few YARA rules: {total} < {min_yara_rules}").into());
+    }
+    let mut text = serde_json::to_string_pretty(&pack)?;
+    text.push('\n');
+    std::fs::write(out, text)?;
+    println!("Sada zapsána: {}", out.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 fn now_unix() -> i64 {
@@ -344,6 +436,58 @@ fn keygen(key_id: &str, out_dir: &std::path::Path) -> Result<ExitCode, Box<dyn s
     Ok(ExitCode::SUCCESS)
 }
 
+/// Klíč pro kontrolu nového podpisu se stejnými pravidly jako v aplikaci.
+/// Klíč se jménem zabudovaného klíče musí být přesně ten zabudovaný (jinak by
+/// aplikace podpis odmítla); neznámý klíč smí podepsat jen testovací sadu.
+#[cfg(feature = "signing")]
+fn signing_check_key(
+    key_id: &str,
+    public_key: [u8; 32],
+) -> Result<antishield_core::rules::TrustedKey, String> {
+    let builtin = builtin_trusted_keys()
+        .into_iter()
+        .find(|k| k.key_id == key_id);
+    if let Some(known) = &builtin
+        && known.public_key != public_key
+    {
+        return Err(format!(
+            "the key file does not match the built-in key {key_id}"
+        ));
+    }
+    Ok(antishield_core::rules::TrustedKey {
+        key_id: key_id.to_string(),
+        public_key,
+        test_only: builtin.is_none_or(|k| k.test_only),
+    })
+}
+
+#[cfg(all(test, feature = "signing"))]
+mod sign_tests {
+    use super::signing_check_key;
+    use antishield_core::rules::builtin_trusted_keys;
+
+    #[test]
+    fn production_key_signs_production_packs() {
+        let prod = builtin_trusted_keys()
+            .into_iter()
+            .find(|k| !k.test_only)
+            .expect("production key is built in");
+        let key = signing_check_key(&prod.key_id, prod.public_key).expect("matching key");
+        assert!(!key.test_only);
+    }
+
+    #[test]
+    fn wrong_or_unknown_keys_are_restricted() {
+        let prod = builtin_trusted_keys()
+            .into_iter()
+            .find(|k| !k.test_only)
+            .expect("production key is built in");
+        assert!(signing_check_key(&prod.key_id, [7; 32]).is_err());
+        let unknown = signing_check_key("someone-else", [7; 32]).expect("unknown key");
+        assert!(unknown.test_only);
+    }
+}
+
 #[cfg(feature = "signing")]
 fn sign(
     pack: &std::path::Path,
@@ -351,19 +495,15 @@ fn sign(
     key_id: &str,
     out: &std::path::Path,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    use antishield_core::rules::{TrustedKey, signing};
+    use antishield_core::rules::signing;
 
     let seed: [u8; 32] = hex::decode(std::fs::read_to_string(key)?.trim())?
         .try_into()
         .map_err(|_| "the key file must contain 32 bytes in hex")?;
     let pack_bytes = std::fs::read(pack)?;
+    let check_key = signing_check_key(key_id, signing::public_key(&seed))?;
     let signature = signing::sign_pack(&pack_bytes, &seed, key_id);
-    // Kontrola: nová sada musí projít ověřením odvozeným veřejným klíčem.
-    let check_key = TrustedKey {
-        key_id: key_id.to_string(),
-        public_key: signing::public_key(&seed),
-        test_only: true,
-    };
+    // Kontrola: nová sada musí projít stejným ověřením jako v aplikaci.
     RulePack::load(&pack_bytes, signature.as_bytes(), &[check_key], now_unix())
         .map_err(|e| describe(&e))?;
     std::fs::write(out, signature)?;

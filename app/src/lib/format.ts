@@ -9,7 +9,9 @@ import type {
   ErrorDto,
   Evidence,
   Finding,
+  FindingOrigin,
   ProtectionLevel,
+  RuleSourceInfo,
   ScanOutcome,
   SkipReason,
 } from "./types";
@@ -44,6 +46,13 @@ const REASONS: Record<string, string> = {
   "audit log cannot be written": "do auditního logu nejde zapisovat",
   "rule pack signature is invalid": "podpis sady pravidel je neplatný",
   "a scan is already running": "kontrola už běží",
+  "folder watching is starting": "hlídání se spouští",
+  "no watched folder exists": "žádná hlídaná složka neexistuje",
+  "no access to files in a watched folder": "systém nedovolil číst soubory v hlídané složce",
+  "rule updates have not run yet": "aktualizace pravidel ještě neproběhla",
+  "rule updates are not published yet": "aktualizace pravidel zatím nejsou zveřejněné",
+  "the engine is still starting": "engine se spouští",
+  "quarantine storage is not writable": "do karantény nejde zapisovat",
 };
 
 export function translateReason(reason: string): string {
@@ -100,22 +109,49 @@ export interface Headline {
   tone: Tone;
 }
 
-/** Souhrnný nápis. „Chráněno“ jen při úrovni `protected` z enginu. */
-export function headline(level: ProtectionLevel, components: ComponentStatus[]): Headline {
-  const realtime = components.find((c) => c.kind === "realTimeProtection");
-  const realtimeRunning = realtime?.state.type === "running";
+function stateOf(components: ComponentStatus[], kind: ComponentKind): ComponentState | undefined {
+  return components.find((c) => c.kind === kind)?.state;
+}
+
+/** Souhrnný nápis. „Chráněn“ jen při úrovni `protected`, „hlídaný“ při `monitored`. */
+export function headline(
+  level: ProtectionLevel,
+  components: ComponentStatus[],
+  device = "počítač",
+): Headline {
+  const realtime = stateOf(components, "realTimeProtection");
+  const updates = stateOf(components, "updates");
+  const realtimeRunning = realtime?.type === "running";
+  const subject = device === "Mac" ? "Váš Mac je" : "Váš počítač je";
   switch (level) {
     case "protected":
       return realtimeRunning
-        ? { title: "Ochrana běží", detail: "Všechny ochranné vrstvy hlásí ověřený stav.", tone: "good" }
+        ? { title: `${subject} chráněn`, detail: "Všechny ochranné vrstvy hlásí ověřený stav.", tone: "good" }
         : { title: "Stav nelze potvrdit", detail: "Engine hlásí ochranu bez běžící ochrany v reálném čase.", tone: "alert" };
-    case "manualScanOnly":
-      return {
-        title: "Ruční kontrola je připravená",
-        detail:
-          "Ochrana v reálném čase zatím není součástí verze 0.1. Soubory se kontrolují jen tehdy, když je vyberete.",
-        tone: "caution",
-      };
+    case "monitored":
+      return realtimeRunning
+        ? {
+            title: `${subject} hlídaný`,
+            detail:
+              "Nové soubory v hlídaných složkách se kontrolují automaticky a pravidla se aktualizují. Spouštění programů zatím neblokujeme.",
+            tone: "good",
+          }
+        : { title: "Stav nelze potvrdit", detail: "Hlídání složek neběží.", tone: "alert" };
+    case "manualScanOnly": {
+      let detail = "Soubory se kontrolují, když je vyberete.";
+      if (realtime?.type === "disabled") {
+        detail = "Hlídání složek je vypnuté. Zapnete ho v Nastavení.";
+      } else if (realtime?.type === "degraded" && realtime.reason === "no access to files in a watched folder") {
+        detail = "Hlídání je omezené: systém nedovolil číst soubory v hlídané složce. Povolte přístup v Ochraně v reálném čase.";
+      } else if (realtime?.type === "failed" || realtime?.type === "degraded") {
+        detail = `Hlídání složek neběží: ${translateReason(realtime.reason)}.`;
+      } else if (updates?.type === "disabled") {
+        detail = "Hlídání běží, ale automatické aktualizace pravidel jsou vypnuté.";
+      } else if (updates?.type === "degraded" || updates?.type === "failed") {
+        detail = `Hlídání běží, čeká se na pravidla: ${translateReason(updates.reason)}.`;
+      }
+      return { title: "Ruční kontrola je připravená", detail, tone: "caution" };
+    }
     case "notReady": {
       const required: ComponentKind[] = ["detectionEngine", "rulePack", "onDemandScan"];
       let reason = "Engine se ještě neověřil.";
@@ -138,13 +174,19 @@ export const SKIP_LABELS: Record<SkipReason["type"], string> = {
   otherVolume: "Jiný nebo síťový disk",
   permissionDenied: "Bez oprávnění ke čtení",
   notFound: "Soubor mezitím zmizel",
-  timeout: "Čtení se zaseklo",
+  timeout: "Kontrola souboru trvala příliš dlouho",
   readError: "Chyba při čtení",
   internalError: "Interní chyba enginu",
 };
 
-export function describeEvidence(evidence: Evidence, ruleId: string): string {
+export function describeEvidence(evidence: Evidence, ruleId: string, sources: RuleSourceInfo[] = []): string {
   switch (evidence.type) {
+    case "yaraMatch": {
+      const source = sources.find((s) => s.id === evidence.source);
+      const from = source ? ` ze sady ${source.name} (${source.license})` : "";
+      const author = evidence.author ? `, autor ${evidence.author}` : "";
+      return `Soubor splňuje pravidlo YARA ${evidence.rule}${from}${author}.`;
+    }
     case "sha256Match":
       return `SHA-256 celého souboru se přesně shoduje s indikátorem ${ruleId}.`;
     case "bytePattern":
@@ -152,6 +194,13 @@ export function describeEvidence(evidence: Evidence, ruleId: string): string {
     case "eicarStandard":
       return "Soubor odpovídá oficiální definici testovacího souboru EICAR.";
   }
+}
+
+export function describeOrigin(origin: FindingOrigin | null): string | null {
+  if (!origin) return null;
+  return origin.type === "process"
+    ? `Běžící proces ${origin.name} (PID ${origin.pid}). Vyčištění ho ukončí.`
+    : `Spouští se po přihlášení (${origin.label || origin.location}). Vyčištění položku vypne.`;
 }
 
 export function findingNote(finding: Finding): string | null {
@@ -181,6 +230,19 @@ const ERRORS: Record<string, string> = {
   rule_pack_too_large: "Sada pravidel je příliš velká. Engine ji odmítl.",
   scan_already_running: "Kontrola už běží. Počkejte na její konec nebo ji zrušte.",
   audit: "Auditní log není dostupný.",
+  engine_starting: "Engine se ještě spouští, zkuste to za chvíli.",
+  unknown_finding: "Tento nález už neexistuje. Spusťte kontrolu znovu.",
+  file_changed: "Soubor se od kontroly změnil, proto se nepřesunul. Zkontrolujte ho znovu.",
+  quarantine_item_not_found: "Položka v karanténě už neexistuje.",
+  restore_conflict: "Na původním místě už je jiný soubor. Přesuňte ho a zkuste obnovu znovu.",
+  rule_pack_rollback: "Nabídnutá sada pravidel je starší než nainstalovaná, proto se odmítla.",
+  rule_pack_self_test: "Nová sada pravidel neprošla self-testem a nenainstalovala se.",
+  rules_not_published: "Aktualizace pravidel zatím nejsou zveřejněné.",
+  rules_download: "Pravidla se nepodařilo stáhnout. Zkontrolujte připojení k internetu.",
+  rules_busy: "Aktualizace pravidel už probíhá.",
+  invalid_settings: "Nastavení obsahuje neplatnou hodnotu.",
+  autostart: "Spuštění po přihlášení se nepodařilo změnit.",
+  no_targets: "Není co kontrolovat: žádná ze složek neexistuje.",
   update: "Aktualizaci se nepodařilo stáhnout nebo ověřit. Zkuste to později.",
   scan_running: "Počkejte na konec kontroly, pak aktualizujte.",
   no_update: "Žádná aktualizace není připravená. Zkontrolujte aktualizace znovu.",
@@ -209,6 +271,13 @@ export function formatDuration(ms: number): string {
   return `${minutes} min ${seconds % 60} s`;
 }
 
+/** Cesta k zobrazení: bez předpony `\\?\`, kterou Windows přidává ke kanonickým cestám. */
+export function displayPath(path: string): string {
+  if (path.startsWith("\\\\?\\UNC\\")) return `\\\\${path.slice(8)}`;
+  if (path.startsWith("\\\\?\\")) return path.slice(4);
+  return path;
+}
+
 export function formatCount(n: number, one: string, few: string, many: string): string {
   const word = n === 1 ? one : n >= 2 && n <= 4 ? few : many;
   return `${n.toLocaleString("cs-CZ")} ${word}`;
@@ -223,6 +292,12 @@ const AUDIT_KINDS: Record<string, string> = {
   scan_finished: "Kontrola skončila",
   finding: "Nález",
   audit_integrity_issue: "Problém s integritou auditu",
+  quarantined: "Přesunuto do karantény",
+  quarantine_restored: "Obnoveno z karantény",
+  quarantine_deleted: "Smazáno z karantény",
+  quarantine_failed: "Přesun do karantény selhal",
+  remediated: "Vyčištění",
+  rule_pack_installed: "Nová sada pravidel nainstalována",
 };
 
 export function describeAuditEvent(event: AuditEvent): { title: string; detail: string } {
@@ -232,7 +307,7 @@ export function describeAuditEvent(event: AuditEvent): { title: string; detail: 
     case "self_test":
       return { title, detail: d.passed ? "prošel" : "selhal" };
     case "finding":
-      return { title, detail: `${String(d.ruleId ?? "")} v ${String(d.path ?? "")}` };
+      return { title, detail: `${String(d.ruleId ?? "")} v ${displayPath(String(d.path ?? ""))}` };
     case "scan_started":
       return { title, detail: Array.isArray(d.roots) ? d.roots.join(", ") : "" };
     case "scan_finished": {
@@ -241,11 +316,24 @@ export function describeAuditEvent(event: AuditEvent): { title: string; detail: 
       const findings = Number(d.findings ?? 0);
       return {
         title,
-        detail: `${outcome ? describeOutcome(outcome) : ""}: ${formatCount(files, "soubor", "soubory", "souborů")}, ${formatCount(findings, "nález", "nálezy", "nálezů")}`,
+        detail: [
+          outcome ? describeOutcome(outcome) : null,
+          `${formatCount(files, "soubor", "soubory", "souborů")}, ${formatCount(findings, "nález", "nálezy", "nálezů")}`,
+        ]
+          .filter(Boolean)
+          .join(": "),
       };
     }
     case "rule_pack_loaded":
+    case "rule_pack_installed":
       return { title, detail: `${String(d.packId ?? "")} ${String(d.version ?? "")}` };
+    case "quarantined":
+    case "quarantine_restored":
+    case "quarantine_deleted":
+    case "quarantine_failed":
+      return { title, detail: String(d.path ?? "") };
+    case "remediated":
+      return { title, detail: String(d.path ?? "") };
     case "rule_pack_rejected":
       return { title, detail: String(d.message ?? "") };
     case "engine_started":
@@ -267,3 +355,15 @@ export function platformName(platform: string): string {
 export function formatDate(ms: number): string {
   return new Date(ms).toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric", year: "numeric" });
 }
+
+/** „před 5 min“, „před 3 h“, jinak datum a čas. */
+export function relativeTime(ms: number, now = Date.now()): string {
+  const minutes = Math.round((now - ms) / 60_000);
+  if (minutes < 1) return "právě teď";
+  if (minutes < 60) return `před ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `před ${hours} h`;
+  return formatDateTime(ms);
+}
+
+export const WEEKDAYS = ["pondělí", "úterý", "středa", "čtvrtek", "pátek", "sobota", "neděle"];

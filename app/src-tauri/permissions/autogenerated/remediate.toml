@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-remediate"
+description = "Enables the remediate command without any pre-configured scope."
+commands.allow = ["remediate"]
+
+[[permission]]
+identifier = "deny-remediate"
+description = "Denies the remediate command without any pre-configured scope."
+commands.deny = ["remediate"]
