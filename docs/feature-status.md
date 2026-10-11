@@ -33,7 +33,7 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 | Animace a plynulost | animují se jen transformace a průhlednost, bez rozmazání v pohyblivých vrstvách; ověřeno v Chromiu (jádro WebView2) a WebKitGTK, na Macu ověří uživatel |
 | Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené |
 | Jiné archivy než ZIP (DMG, PKG, RAR, 7z) | rozpoznají se a započítají jako „nerozbalené“ |
-| App Sandbox na macOS | vypnutý kvůli aktualizacím (sandboxovaná aplikace nesmí přepsat sama sebe) |
+| App Sandbox na macOS | vypnutý kvůli aktualizacím (sandboxovaná aplikace nesmí přepsat sama sebe); tvrzené prostředí zapnuté s výjimkou pro kód YARA-X překládaný za běhu |
 | Distribuce | DMG podepsaný ad-hoc, Windows nepodepsaný; uživatel jednou povolí spuštění |
 
 ## Chybí (plánováno)

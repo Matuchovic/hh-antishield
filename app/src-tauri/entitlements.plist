@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Engine YARA-X (wasmtime) překládá podmínky pravidel za běhu do strojového
+	kódu a zpřístupní ho přes mprotect (bez MAP_JIT). Bez této výjimky
+	tvrzeného běhového prostředí macOS aplikaci ukončí („Code Signature
+	Invalid“). Ostatní ochrany tvrzeného prostředí zůstávají zapnuté.
+	-->
+	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+	<true/>
+</dict>
+</plist>

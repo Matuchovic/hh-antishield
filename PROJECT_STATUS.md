@@ -1,10 +1,15 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.2.0, PR čeká na CI a sloučení)
+Aktualizováno: 2026-10-11 (v0.2.1)
 
 ## Stav
-- v0.1.1 a v0.1.2 vydány (GitHub Releases, podepsané aktualizace přes banner).
-- v0.2.0 hotová ve větvi `claude/v0.2-detection`: YARA-X a produkční pravidla
+- v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
+  (vydání `rules`).
+- v0.2.0 na macOS padá hned po startu: tvrzené prostředí ukončí vlákno
+  enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
+  Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
+  0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.2: YARA-X a produkční pravidla
   z YARA Forge, ZIP, hlídání složek v reálném čase, karanténa a vyčištění
   (proces, položka po přihlášení), rychlá/úplná/plánovaná kontrola, bezpečnost
   systému (jen čtení), nastavení, lišta, spuštění po přihlášení, oznámení,
@@ -25,6 +30,9 @@ Aktualizováno: 2026-10-11 (v0.2.0, PR čeká na CI a sloučení)
 - Tauri, jedna aplikace pro macOS a Windows; distribuce mimo App Store.
 - Samostatný projekt: žádný vliv na hhsecurity a hhcloud.
 - Aktualizace aplikace přes banner (GitHub Releases), App Sandbox vypnutý.
+- Tvrzené prostředí (hardened runtime) zapnuté s jedinou výjimkou
+  `com.apple.security.cs.allow-unsigned-executable-memory` pro JIT ve
+  wasmtime (YARA-X); Release spouští self-test z podepsaného balíčku.
 - Pravidla: YARA Forge core, jen licence MIT/Apache/BSD/DRL/CC0/CC-BY/
   Unlicense; podpis klíčem `hh-rules-2026-10` (secret `RULES_SIGNING_KEY`),
   vydání `rules` (prerelease, ne „latest“).
@@ -46,7 +54,9 @@ Aktualizováno: 2026-10-11 (v0.2.0, PR čeká na CI a sloučení)
   souborům, Ploše a Dokumentům; bez povolení aplikace hlásí omezené hlídání.
 
 ## Známé problémy
-- Aplikace zatím nespuštěna na skutečném Windows; 0.2 ani na Macu.
+- Aplikace zatím nespuštěna na skutečném Windows.
+- Self-test v Release dřív běžel na binárce mimo podepsaný balíček, takže
+  pád v tvrzeném prostředí neodhalil (opraveno).
 - Repozitář je veřejný – zvážit přepnutí na soukromý.
 - Z cloudového prostředí nejde stahovat artefakty, tagovat ani nastavit secrets.
 - Balíčky nejsou podepsané Developer ID ani pro Windows.
