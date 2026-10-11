@@ -174,9 +174,18 @@ h3 {
 }
 
 .brand-logo {
-  width: 118px;
-  margin-bottom: 6px;
+  width: 100%;
+  max-width: 236px;
   animation: brand-in 1.1s var(--ease-out) both;
+}
+
+.sidebar .brand-logo img {
+  filter: drop-shadow(0 0 10px rgba(61, 139, 255, 0.35));
+}
+
+.brand-logo .logo-shine {
+  -webkit-mask-image: url("./assets/hh-antishield-logo.png");
+  mask-image: url("./assets/hh-antishield-logo.png");
 }
 
 .brand-logo img,
@@ -201,18 +210,7 @@ h3 {
   animation: logo-shine 7s ease-in-out 1.6s infinite;
 }
 
-.brand-name {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-}
 
-.brand-sub {
-  color: var(--mist);
-  font-size: 10.5px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-}
 
 .nav {
   display: grid;

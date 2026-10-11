@@ -1,4 +1,4 @@
-import logo from "../assets/hh-logo.png";
+import brandLogo from "../assets/hh-antishield-logo.png";
 import { platformName } from "../lib/format";
 import type { EngineInfo, ProtectionLevel } from "../lib/types";
 import { Icon, type IconName } from "./Icon";
@@ -55,11 +55,9 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="brand">
         <div className="brand-logo">
-          <img src={logo} alt="" draggable={false} />
+          <img src={brandLogo} alt="H&H AntiShield – Antivirus & System Protection" draggable={false} />
           <span className="logo-shine" />
         </div>
-        <p className="brand-name">H&amp;H AntiShield</p>
-        <p className="brand-sub">Ruční kontrola souborů</p>
       </div>
 
       <nav aria-label="Hlavní">
