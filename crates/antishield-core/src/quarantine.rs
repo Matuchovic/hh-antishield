@@ -279,7 +279,7 @@ impl Quarantine {
                 items.push(item.public());
             }
         }
-        items.sort_by(|a, b| b.quarantined_at_ms.cmp(&a.quarantined_at_ms));
+        items.sort_by_key(|item| std::cmp::Reverse(item.quarantined_at_ms));
         Ok(items)
     }
 

@@ -126,8 +126,11 @@ fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     fs::rename(&temp, path)
 }
 
-/// Načte nainstalovanou sadu, pokud existuje: (sada, podpis) jako bajty.
-fn read_installed(rules_dir: &Path) -> Option<Result<(Vec<u8>, Vec<u8>), EngineError>> {
+/// Sada pravidel a její podpis jako bajty.
+type PackBytes = (Vec<u8>, Vec<u8>);
+
+/// Načte nainstalovanou sadu, pokud existuje.
+fn read_installed(rules_dir: &Path) -> Option<Result<PackBytes, EngineError>> {
     let current = fs::read_to_string(rules_dir.join("current")).ok()?;
     let name = current.trim();
     if !valid_installed_dir(name) {
@@ -373,7 +376,7 @@ impl Engine {
                 Some((sequence, entry.path()))
             })
             .collect();
-        others.sort_by(|a, b| b.0.cmp(&a.0));
+        others.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         for (_, path) in others.into_iter().skip(1) {
             let _ = fs::remove_dir_all(path);
         }
