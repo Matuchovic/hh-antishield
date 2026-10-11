@@ -88,6 +88,9 @@ function CleanPanel({ app, onError }: { app: AntiShield; onError: (text: string 
   const [confirmTrash, setConfirmTrash] = useState(false);
   const [stopped, setStopped] = useState(false);
   const activeRef = useRef<CleanCategory | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  // V úzkém okně je plátno nad tlačítky: při úklidu ho ukázat celé.
+  const showStage = () => stageRef.current?.scrollIntoView({ block: "nearest" });
 
   useEffect(() => {
     void api
@@ -151,6 +154,7 @@ function CleanPanel({ app, onError }: { app: AntiShield; onError: (text: string 
     onError(null);
     setPhase("cleaning");
     setConfirmTrash(false);
+    showStage();
     try {
       // Jádro se nejdřív „nabije“ (částice vybraných kategorií zrychlí).
       const [result] = await Promise.all([
@@ -213,7 +217,7 @@ function CleanPanel({ app, onError }: { app: AntiShield; onError: (text: string 
   return (
     <>
       <section className={`panel vortex-panel is-${phase}`} aria-labelledby="clean-title">
-        <div className="vortex-stage">
+        <div className="vortex-stage" ref={stageRef}>
           <Vortex phase={phase} groups={vortexGroups} active={active} focus={focus} still={still} />
         </div>
         <div className="vortex-side" aria-live="polite">
