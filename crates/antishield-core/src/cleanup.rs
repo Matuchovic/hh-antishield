@@ -446,12 +446,12 @@ impl Scanner<'_> {
             .follow_links(false)
             .into_iter()
             .filter_entry(|e| {
-                let name = e.file_name().to_string_lossy();
-                // Bez skrytých složek, Knihovny, Koše a balíčků (Fotky, aplikace).
                 e.depth() == 0
-                    || !(name.starts_with('.')
-                        || (e.depth() == 1 && name == "Library")
-                        || (e.file_type().is_dir() && name.contains('.') && is_package_dir(&name)))
+                    || !skip_for_large_files(
+                        e.depth(),
+                        &e.file_name().to_string_lossy(),
+                        e.file_type().is_dir(),
+                    )
             });
         let mut seen = 0u64;
         for entry in walker {
@@ -531,6 +531,27 @@ fn is_installer(path: &Path) -> bool {
     } else {
         matches!(ext.as_str(), "dmg" | "pkg" | "mpkg" | "iso" | "xip")
     }
+}
+
+/// Velké soubory se nehledají ve skrytých složkách, v Knihovně (macOS), v Koši,
+/// v balíčcích (Fotky, aplikace) ani ve složkách synchronizovaných s cloudem:
+/// přesun do Koše by tam soubor smazal i na ostatních zařízeních.
+fn skip_for_large_files(depth: usize, name: &str, is_dir: bool) -> bool {
+    const CLOUD: &[&str] = &[
+        "Dropbox",
+        "OneDrive",
+        "Google Drive",
+        "Box",
+        "iCloud Drive",
+        "pCloud Drive",
+        "MEGA",
+    ];
+    name.starts_with('.')
+        || (depth == 1
+            && (name == "Library"
+                || name == "AppData"
+                || (is_dir && CLOUD.iter().any(|c| name.starts_with(c)))))
+        || (is_dir && name.contains('.') && is_package_dir(name))
 }
 
 /// Balíček (Fotky, Hudba, aplikace) se prochází jen jako celek, ne po souborech.
@@ -687,8 +708,15 @@ fn allowed(item: &CleanItem, ctx: &CleanContext) -> Result<PathBuf, &'static str
                 || parent == ctx.home.join("Library/Preferences")
         }
         CleanCategory::LargeFiles => {
-            !relative.starts_with("Library")
-                && std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
+            // Stejná pravidla jako při hledání (cloud, Knihovna, balíčky).
+            let parts: Vec<_> = relative.components().collect();
+            !parts.iter().enumerate().any(|(i, part)| {
+                skip_for_large_files(
+                    i + 1,
+                    &part.as_os_str().to_string_lossy(),
+                    i + 1 < parts.len(),
+                )
+            }) && std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file())
         }
         CleanCategory::Trash => layout.trash.as_deref() == Some(path.as_path()),
     };
@@ -897,6 +925,31 @@ mod tests {
     }
 
     #[test]
+    fn large_files_skip_cloud_folders_libraries_and_packages() {
+        for (depth, name, dir) in [
+            (1, "Library", true),
+            (1, "AppData", true),
+            (1, "Dropbox", true),
+            (1, "OneDrive - Firma s.r.o.", true),
+            (1, "Google Drive", true),
+            (2, ".git", true),
+            (3, "Photos Library.photoslibrary", true),
+            (2, "Xcode.app", true),
+        ] {
+            assert!(skip_for_large_files(depth, name, dir), "{name}");
+        }
+        for (depth, name, dir) in [
+            (1, "Movies", true),
+            (1, "Downloads", true),
+            (2, "Library", true),
+            (2, "film.mov", false),
+            (1, "Boxing.mov", false),
+        ] {
+            assert!(!skip_for_large_files(depth, name, dir), "{name}");
+        }
+    }
+
+    #[test]
     fn forged_or_moved_items_are_refused() {
         let (tmp, ctx) = home();
         let h = tmp.path();
@@ -927,11 +980,23 @@ mod tests {
         fs::write(h.join("Documents/big.mov"), b"x").unwrap();
         let wrong_method = CleanItem {
             path: h.join("Documents/big.mov").to_string_lossy().into_owned(),
-            ..forged
+            ..forged.clone()
         };
         let outcome = clean(&ctx, &[wrong_method], &|_| Ok(()));
         assert_eq!(outcome.failed[0].reason, "method not allowed");
         assert!(h.join("Documents/big.mov").exists());
+
+        // Soubor ve složce synchronizované s cloudem se do Koše nepřesune.
+        fs::create_dir_all(h.join("Dropbox")).unwrap();
+        fs::write(h.join("Dropbox/big.mov"), b"x").unwrap();
+        let in_cloud = CleanItem {
+            path: h.join("Dropbox/big.mov").to_string_lossy().into_owned(),
+            method: CleanMethod::MoveToTrash,
+            ..forged
+        };
+        let outcome = clean(&ctx, &[in_cloud], &|_| Ok(()));
+        assert_eq!(outcome.failed[0].reason, "not allowed here");
+        assert!(h.join("Dropbox/big.mov").exists());
     }
 
     #[cfg(unix)]

@@ -105,6 +105,9 @@ Aktualizováno: 2026-10-12 (v0.6.0)
   jdou do Koše přes systém (crate `trash`, na macOS NSFileManager, bez
   ovládání Finderu). Mezipaměť změněná v posledních 15 minutách (na Windows
   dočasné soubory za den) a mezipaměť běžící aplikace se nepředvybírá.
+  Velké soubory se nehledají ani neuklízejí ve složkách synchronizovaných
+  s cloudem (Dropbox, OneDrive, Google Drive, Box, …): Koš by je smazal
+  i na ostatních zařízeních.
   Každý zásah znovu ověří umístění podle kategorie a že žádný článek cesty
   není odkaz. Zápis do auditu (`cleanup`).
 - Zrychlení: žádné „čištění RAM“ ani zásahy do systému. Ukončení jen šetrné
@@ -116,10 +119,10 @@ Aktualizováno: 2026-10-12 (v0.6.0)
   nikde netvrdí.
 
 ## Testy (2026-10-12, lokálně)
-- Rust: 110 testů na Linuxu (jádro 87, CLI 2, aplikace 21) + test PKG/DMG
+- Rust: 111 testů na Linuxu (jádro 88, CLI 2, aplikace 21) + test PKG/DMG
   jen na macOS, clippy `-D warnings`, rustfmt. Nové: čištění (nález
   a úklid, podvržená/přesunutá položka, odkazy, zbytky aplikací, právě
-  používaná mezipaměť), zrychlení (měření, vratné položky po přihlášení,
+  používaná mezipaměť, složky synchronizované s cloudem), zrychlení (měření, vratné položky po přihlášení,
   SIGTERM s ověřením konce, odmítnutí systémových programů a sebe).
 - UI: 26 testů vitest (+ čištění a zrychlení: výběr, Koš zvlášť, kategorie,
   překlady, prahy disku a paměti, doporučení, doba běhu), typecheck, build.
