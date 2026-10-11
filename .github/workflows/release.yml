@@ -1,11 +1,22 @@
 name: Release
 
-# Sestaví instalační balíčky a podepsané aktualizace. Značka v* navíc vytvoří
-# GitHub Release s latest.json, odkud si aplikace stahuje aktualizace.
+# Sestaví instalační balíčky a podepsané aktualizace. Ruční spuštění se
+# zaškrtnutým „publish“ (nebo značka v*) vytvoří GitHub Release v<verze>
+# s latest.json, odkud si aplikace stahuje aktualizace. Vydání tedy vždy
+# potvrzuje člověk.
 # macOS: podpis ad-hoc (bez Apple Developer ID), Windows: nepodepsaný instalátor.
 # Aktualizace podepisuje klíč updateru z GitHub Secrets (TAURI_SIGNING_*).
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Vydat jako GitHub Release (aplikace ho nabídne k aktualizaci)"
+        type: boolean
+        default: false
+      notes:
+        description: "Poznámky k vydání (zobrazí se v banneru)"
+        type: string
+        default: ""
   push:
     tags: ["v*"]
 
@@ -94,7 +105,7 @@ jobs:
 
   publish:
     name: GitHub Release + latest.json
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     needs: [macos, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -106,13 +117,19 @@ jobs:
           path: out
           merge-multiple: true
       - name: Ověřit verzi a sestavit latest.json
+        env:
+          INPUT_NOTES: ${{ inputs.notes }}
         run: |
-          TAG="$GITHUB_REF_NAME"
-          VER="${TAG#v}"
-          test "$VER" = "$(node -p "require('./app/package.json').version")"
-          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
-          NOTES=$(git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN/,$d')
+          VER=$(node -p "require('./app/package.json').version")
+          TAG="v$VER"
+          NOTES="$INPUT_NOTES"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            test "$GITHUB_REF_NAME" = "$TAG"
+            git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+            NOTES=$(git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN/,$d')
+          fi
           [ -n "$NOTES" ] || NOTES="H&H AntiShield $VER"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
           printf '%s\n' "$NOTES" > notes.md
           BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
           MAC="hh-antishield_${VER}_universal.app.tar.gz"
@@ -128,4 +145,5 @@ jobs:
       - name: Vydání
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" out/* --title "H&H AntiShield $GITHUB_REF_NAME" --notes-file notes.md
+        # Existující vydání se nepřepisuje: každá verze je neměnná.
+        run: gh release create "$TAG" out/* --target "$GITHUB_SHA" --title "H&H AntiShield $TAG" --notes-file notes.md
