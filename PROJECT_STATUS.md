@@ -32,14 +32,18 @@ Aktualizováno: 2026-10-11 (v0.2.0, PR čeká na CI a sloučení)
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
 ## Testy (2026-10-11, lokálně)
-- Rust: 72 testů (jádro 64, CLI 4, aplikace 4), clippy `-D warnings`,
+- Rust: 74 testů (jádro 65, CLI 4, aplikace 5), clippy `-D warnings`,
   rustfmt; self-test aplikace `--self-test` prošel.
 - Produkční řetězec pravidel lokálně: build → podpis produkčním klíčem →
   verify → self-test → nález pravidlem z Forge. Odhalil chybu: `rules sign`
   kontroloval podpis jako testovací klíč (opraveno + testy).
-- UI: 9 testů vitest, typecheck, build; snímky všech obrazovek v Chromiu
+- UI: 10 testů vitest, typecheck, build; snímky všech obrazovek v Chromiu
   s náhradou IPC; skutečná aplikace pod Xvfb (WebKitGTK) vykreslí přehled.
-- macOS a Windows: čeká na CI v PR.
+- CI v PR #3: jádro zelené na Linuxu, macOS i Windows (macOS odhalil
+  odmítnutí cest přes `/var` → `/private/var` při kontrole jednoho souboru;
+  opraveno + test).
+- Na macOS se při prvním spuštění zeptá systém na přístup ke Staženým
+  souborům, Ploše a Dokumentům; bez povolení aplikace hlásí omezené hlídání.
 
 ## Známé problémy
 - Aplikace zatím nespuštěna na skutečném Windows; 0.2 ani na Macu.
