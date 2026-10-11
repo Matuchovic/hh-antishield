@@ -34,6 +34,9 @@ winreg.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rustix.workspace = true
+
 [dev-dependencies]
 zip = { workspace = true }
 antishield-core = { path = ".", features = ["signing"] }

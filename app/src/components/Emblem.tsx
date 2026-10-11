@@ -1,5 +1,7 @@
-import { memo } from "react";
+import { memo, type RefObject, useEffect, useRef, useState } from "react";
 import { SHIELD_LAYERS } from "../lib/format";
+import { onPulse } from "../lib/radar";
+import { RadarCanvas } from "./Radar";
 
 // Znak v hlavní kartě: animované energetické jádro a prstence. Vnější prstenec
 // má 6 oblouků, jeden za každou ochrannou vrstvu; svítí jen běžící vrstvy.
@@ -42,24 +44,128 @@ export const Core = memo(function Core() {
         <div className="core-swirl" />
         <div className="core-swirl reverse" />
         <div className="core-gloss" />
+        <div className="core-alert" />
       </div>
       <div className="core-heart" />
     </div>
   );
 });
 
+/** Poslední zkontrolovaná položka pod znakem (nejvýš jednou za 450 ms, zmizí po 3,5 s). */
+function useTicker(): { text: string; threat: boolean } | null {
+  const [tick, setTick] = useState<{ text: string; threat: boolean } | null>(null);
+  useEffect(() => {
+    let shownAt = 0;
+    let threatUntil = 0;
+    let clear = 0;
+    const stop = onPulse((pulse) => {
+      const now = performance.now();
+      // Hrozba zůstane vidět; běžné kontroly nejvýš jednou za 450 ms.
+      if (!pulse.threat && (now < threatUntil || now - shownAt < 450)) return;
+      shownAt = now;
+      if (pulse.threat) threatUntil = now + 8000;
+      setTick({ text: pulse.name, threat: pulse.threat });
+      window.clearTimeout(clear);
+      clear = window.setTimeout(() => setTick(null), pulse.threat ? 8000 : 3500);
+    });
+    return () => {
+      stop();
+      window.clearTimeout(clear);
+    };
+  }, []);
+  return tick;
+}
+
+/** Náklon za kurzorem (jen posun vrstev, žádné 3D) a záblesk při hrozbě. */
+function useEmblemMotion(ref: RefObject<HTMLDivElement | null>, still: boolean) {
+  useEffect(() => {
+    const el = ref.current;
+    const hero = el?.closest<HTMLElement>(".hero");
+    if (!el || !hero) return;
+    let frame = 0;
+    let hitTimer = 0;
+    const onMove = (e: PointerEvent) => {
+      if (still || frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const r = el.getBoundingClientRect();
+        const x = Math.max(-1, Math.min(1, (e.clientX - (r.left + r.width / 2)) / (r.width * 1.6)));
+        const y = Math.max(-1, Math.min(1, (e.clientY - (r.top + r.height / 2)) / (r.height * 1.6)));
+        el.style.setProperty("--px", x.toFixed(3));
+        el.style.setProperty("--py", y.toFixed(3));
+      });
+    };
+    const onLeave = () => {
+      el.style.setProperty("--px", "0");
+      el.style.setProperty("--py", "0");
+    };
+    // Vrstva, která kontrolu provedla, krátce zazáří.
+    const arcFor: Record<string, string> = {
+      download: "a3",
+      file: "a3",
+      program: "a3",
+      startup: "a3",
+      mail: "a5",
+      scan: "a2",
+    };
+    const pingTimers = new Map<Element, number>();
+    const stopPulses = onPulse((pulse) => {
+      const arc = el.querySelector(`.layer-arc.tone-good.${arcFor[pulse.kind] ?? "a0"}`);
+      if (arc) {
+        arc.classList.add("is-ping");
+        window.clearTimeout(pingTimers.get(arc));
+        pingTimers.set(arc, window.setTimeout(() => arc.classList.remove("is-ping"), 450));
+      }
+      if (!pulse.threat) return;
+      el.classList.remove("is-hit");
+      // Nové spuštění animace zásahu.
+      void el.offsetWidth;
+      el.classList.add("is-hit");
+      window.clearTimeout(hitTimer);
+      hitTimer = window.setTimeout(() => el.classList.remove("is-hit"), 1700);
+    });
+    hero.addEventListener("pointermove", onMove, { passive: true });
+    hero.addEventListener("pointerleave", onLeave);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(hitTimer);
+      for (const timer of pingTimers.values()) window.clearTimeout(timer);
+      stopPulses();
+      hero.removeEventListener("pointermove", onMove);
+      hero.removeEventListener("pointerleave", onLeave);
+    };
+  }, [ref, still]);
+}
+
 /** `layers`: tóny 6 vrstev oddělené čárkou (stabilní hodnota pro memo). */
-export const Emblem = memo(function Emblem({ layers, scanning }: { layers: string; scanning: boolean }) {
+export const Emblem = memo(function Emblem({
+  layers,
+  scanning,
+  still,
+  alert,
+}: {
+  layers: string;
+  scanning: boolean;
+  still: boolean;
+  /** Nevyčištěné hrozby: jádro zůstane lehce rudé. */
+  alert: boolean;
+}) {
   const tones = layers.split(",");
   const running = tones.filter((t) => t === "good").length;
+  const ref = useRef<HTMLDivElement>(null);
+  const calm = still || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  useEmblemMotion(ref, calm);
+  const tick = useTicker();
   return (
     <figure className="emblem-wrap">
       <div
-        className={`emblem${scanning ? " is-scanning" : ""}`}
+        ref={ref}
+        className={`emblem${scanning ? " is-scanning" : ""}${alert ? " is-alert" : ""}`}
         role="img"
         aria-label={`${running} ze ${SHIELD_LAYERS.length} ochranných vrstev běží${scanning ? ", kontrola probíhá" : ""}`}
       >
         <div className="emblem-halo" />
+        <RadarCanvas className="ring-layer radar-layer" scanning={scanning} still={calm} />
         <div className="ring-layer ring-dash">
           <svg viewBox="0 0 300 300" aria-hidden="true">
             <circle cx={C} cy={C} r="149" />
@@ -100,7 +206,6 @@ export const Emblem = memo(function Emblem({ layers, scanning }: { layers: strin
           ))}
           <circle cx={C} cy={C} r="106" className="ring-thin" />
         </svg>
-        <div className="emblem-sweep" />
         <Core />
       </div>
       <figcaption className="emblem-caption">
@@ -112,6 +217,13 @@ export const Emblem = memo(function Emblem({ layers, scanning }: { layers: strin
           </>
         )}
       </figcaption>
+      <p className={`emblem-ticker${tick ? " is-on" : ""}${tick?.threat ? " is-threat" : ""}`} aria-hidden="true">
+        {tick ? (
+          <>
+            <span>{tick.threat ? "Zachyceno" : "Zkontrolováno"}</span> {tick.text}
+          </>
+        ) : null}
+      </p>
     </figure>
   );
 });

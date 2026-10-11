@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { displayPath, formatBytes, formatDateTime } from "../lib/format";
+import { storyFor } from "../lib/story";
 import type { AntiShield } from "../lib/useAntiShield";
 
 export function Quarantine({ app }: { app: AntiShield }) {
@@ -32,6 +33,14 @@ export function Quarantine({ app }: { app: AntiShield }) {
                 </span>
               </span>
               <span className="q-actions">
+                {(() => {
+                  const story = storyFor(app.stories, item.originalPath, item.sha256);
+                  return story ? (
+                    <button type="button" className="btn-secondary small" onClick={() => app.openStory(story.id)}>
+                      Příběh útoku
+                    </button>
+                  ) : null;
+                })()}
                 <button type="button" className="btn-secondary small" onClick={() => void app.restore(item.id)}>
                   <Icon name="restore" size={16} /> Obnovit
                 </button>

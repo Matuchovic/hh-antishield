@@ -20,6 +20,7 @@ use tauri_plugin_updater::UpdaterExt;
 use crate::services::{self, EmitObserver};
 use crate::settings::{PresetScan, Settings};
 use crate::state::{AppState, RuntimeInfo};
+use crate::story::{Story, StoryOutcome};
 
 fn app_error(code: &str, message: &str) -> ErrorDto {
     ErrorDto {
@@ -179,7 +180,25 @@ pub async fn remediate(
     })
     .await
     .map_err(|e| app_error("remediate", &e.to_string()))??;
+    // Výsledek k příběhům útoku stejných souborů.
+    if let Ok(mut book) = state.stories.lock() {
+        let at_ms = crate::state::now_ms();
+        for report in &reports {
+            let outcome = match &report.quarantined {
+                Some(item) => StoryOutcome::Quarantined {
+                    item_id: item.id.clone(),
+                    process_terminated: report.process_terminated,
+                },
+                None if !report.problems.is_empty() => StoryOutcome::Failed {
+                    reason: report.problems.join("; "),
+                },
+                None => continue,
+            };
+            book.record_outcome(&report.path, outcome, at_ms, &state.data_dir);
+        }
+    }
     let _ = app.emit("quarantine-changed", ());
+    let _ = app.emit("stories-changed", ());
     Ok(reports)
 }
 
@@ -302,6 +321,16 @@ pub async fn update_rules_now(app: AppHandle) -> Result<RuleUpdateOutcome, Error
 #[tauri::command]
 pub fn runtime_info(state: State<'_, AppState>) -> RuntimeInfo {
     state.runtime_info()
+}
+
+/// Příběhy útoků (nejnovější první): původ, spuštění, zásah.
+#[tauri::command]
+pub fn threat_stories(state: State<'_, AppState>) -> Vec<Story> {
+    state
+        .stories
+        .lock()
+        .map(|book| book.list())
+        .unwrap_or_default()
 }
 
 /// Restart AntiShieldu: macOS použije nově povolený plný přístup k disku až

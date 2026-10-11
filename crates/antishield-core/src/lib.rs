@@ -23,6 +23,7 @@ pub mod matcher;
 mod platform;
 pub mod posture;
 pub mod privacy;
+pub mod provenance;
 pub mod quarantine;
 pub mod rules;
 pub mod scan;

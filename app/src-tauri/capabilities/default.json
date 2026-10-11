@@ -26,6 +26,7 @@
     "allow-privacy-report",
     "allow-update-rules-now",
     "allow-runtime-info",
+    "allow-threat-stories",
     "allow-restart-app",
     "allow-get-settings",
     "allow-save-settings",

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AccessPrompt } from "./components/AccessPrompt";
 import { Intro } from "./components/Intro";
 import { Sidebar, type Screen } from "./components/Sidebar";
+import { StorySheet } from "./components/StorySheet";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { onAppEvent } from "./lib/api";
 import { describeError } from "./lib/format";
@@ -135,6 +136,7 @@ export function App() {
         </div>
       </main>
       <AccessPrompt app={app} paused={intro !== "done"} />
+      <StorySheet app={app} onNavigate={setScreen} />
       {intro === "show" ? <Intro sound={settings?.sounds ?? true} onDone={() => setIntro("done")} /> : null}
     </div>
   );

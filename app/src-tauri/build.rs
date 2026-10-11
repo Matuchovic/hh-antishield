@@ -20,6 +20,7 @@ fn main() {
         "privacy_report",
         "update_rules_now",
         "runtime_info",
+        "threat_stories",
         "restart_app",
         "get_settings",
         "save_settings",

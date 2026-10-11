@@ -1,12 +1,14 @@
 # H&H AntiShield
 
-Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.4**
+Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.5**
 kontroluje soubory pravidly YARA a otisky (včetně obsahu ZIP a na macOS
 balíčků PKG a obrazů DMG), na pozadí hlídá vybrané složky, nově spuštěné
 programy, položky po přihlášení a přílohy Apple Mail, nálezy izoluje do
 karantény (škodlivý proces ukončí, položku po přihlášení vypne), ukáže
 oprávnění aplikací (obrazovka, klávesnice, kamera, …) a upozorní na nová,
-sama si aktualizuje podepsaná pravidla i aplikaci. Spouštění programů předem
+sama si aktualizuje podepsaná pravidla i aplikaci. Radar ochrany ukazuje
+živě, co hlídání právě kontroluje, a ke každé hrozbě je příběh útoku: odkud
+přišla, co ji spustilo a co AntiShield udělal. Spouštění programů předem
 neblokuje a internetovou ochranu zatím nemá; aplikace to otevřeně říká.
 Přesný stav je v [docs/feature-status.md](docs/feature-status.md).
 
@@ -79,7 +81,7 @@ cd app && npm run tauri build                      # balíček; potřebuje TAURI
   Defender); aplikace ochrany systému nikdy nevypíná ani nemění.
 - Testy používají jen neškodné vzorky (EICAR, syntetická data, značky).
   Skutečný malware do repozitáře nepatří.
-- Rozhraní smí volat jen 24 příkazů povolených v
+- Rozhraní smí volat jen 25 příkazů povolených v
   `app/src-tauri/capabilities/default.json`; cesty ke kontrole vybírá nativní
   dialog v backendu a vyčistit jde jen nález, který backend sám vytvořil nebo právě znovu ověřil. App Sandbox je vypnutý, protože aplikace v sandboxu se
   nemůže sama aktualizovat; aktualizace přijme jen s platným podpisem.

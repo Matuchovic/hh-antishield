@@ -15,6 +15,7 @@ use antishield_core::{Engine, EngineConfig, Finding, ScanHandle, ScanSummary};
 use serde::Serialize;
 
 use crate::settings::Settings;
+use crate::story::{ActivityLog, StoryBook};
 
 /// Kolik posledních výběrů z dialogu si pamatujeme.
 const MAX_SELECTIONS: usize = 20;
@@ -100,6 +101,8 @@ pub struct RuntimeInfo {
     pub programs_since_ms: Option<u64>,
     /// Plný přístup k disku (jen macOS; jinde `None`).
     pub full_disk_access: Option<bool>,
+    /// Co ochrana zkontrolovala od spuštění (radar).
+    pub activity: ActivityLog,
 }
 
 pub struct AppState {
@@ -129,6 +132,10 @@ pub struct AppState {
     pub programs_since_ms: Mutex<Option<u64>>,
     /// Poslední přehled oprávnění aplikací a kdy vznikl.
     pub privacy: Mutex<Option<(u64, PrivacyReport)>>,
+    /// Příběhy útoků (uložené, jen k zobrazení).
+    pub stories: Mutex<StoryBook>,
+    /// Co ochrana zkontrolovala od spuštění (radar).
+    pub activity: Mutex<ActivityLog>,
 }
 
 /// Kontrola souborů, které přibyly, když ochrana neběžela.
@@ -149,6 +156,7 @@ impl AppState {
     pub fn new(data_dir: PathBuf) -> Self {
         let settings = Settings::load(&data_dir.join("settings.json"));
         let restored_summary = load_summary(&data_dir.join(LAST_SUMMARY_FILE));
+        let stories = StoryBook::load(&data_dir);
         Self {
             data_dir,
             engine: OnceLock::new(),
@@ -169,6 +177,8 @@ impl AppState {
             programs_checked: AtomicU64::new(0),
             programs_since_ms: Mutex::new(None),
             privacy: Mutex::new(None),
+            stories: Mutex::new(stories),
+            activity: Mutex::new(ActivityLog::default()),
         }
     }
 
@@ -396,15 +406,19 @@ impl AppState {
     /// Cesty nálezů z minulého spuštění (bez nálezu z tohoto spuštění), které
     /// se před vyčištěním musí znovu zkontrolovat.
     pub fn restored_finding_paths(&self, paths: &[String]) -> Vec<PathBuf> {
-        if lock(&self.last_summary).is_some() {
-            return Vec::new();
+        let mut found: Vec<String> = lock(&self.stories).unresolved_paths(paths);
+        if lock(&self.last_summary).is_none() {
+            found.extend(
+                self.restored_summary
+                    .iter()
+                    .flat_map(|summary| summary.findings.iter())
+                    .filter(|finding| paths.contains(&finding.path))
+                    .map(|finding| finding.path.clone()),
+            );
         }
-        self.restored_summary
-            .iter()
-            .flat_map(|summary| summary.findings.iter())
-            .filter(|finding| paths.contains(&finding.path))
-            .map(|finding| PathBuf::from(&finding.path))
-            .collect()
+        found.sort();
+        found.dedup();
+        found.into_iter().map(PathBuf::from).collect()
     }
 
     pub fn set_pending_update(&self, update: Option<tauri_plugin_updater::Update>) {
@@ -471,6 +485,7 @@ impl AppState {
             background_problem: lock(&self.background_problem).clone(),
             last_catch_up: lock(&self.last_catch_up).clone(),
             full_disk_access,
+            activity: lock(&self.activity).clone(),
         }
     }
 }

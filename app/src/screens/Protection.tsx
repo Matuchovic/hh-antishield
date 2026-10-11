@@ -1,8 +1,10 @@
 import { Icon } from "../components/Icon";
+import { RadarPanel } from "../components/RadarPanel";
 import type { Screen } from "../components/Sidebar";
 import { Toggle } from "../components/Toggle";
 import { describeState, displayPath, formatCount, formatDateTime, stateTone } from "../lib/format";
-import type { DetectionAction, FindingOrigin } from "../lib/types";
+import { targetOf } from "../lib/story";
+import type { FindingOrigin, Story } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
 
 function originText(origin: FindingOrigin): string {
@@ -11,21 +13,29 @@ function originText(origin: FindingOrigin): string {
     : `Spouští se po přihlášení (${origin.label || displayPath(origin.location)})`;
 }
 
-function actionText(action: DetectionAction): string {
-  switch (action.type) {
+function outcomeText(story: Story): string {
+  switch (story.outcome.type) {
     case "quarantined":
-      return "Přesunuto do karantény";
-    case "detected":
-      return "Zachyceno, čeká na vyčištění";
+      return story.outcome.processTerminated ? "Ukončeno a v karanténě" : "Přesunuto do karantény";
+    case "reported":
+      return "Čeká na vyčištění";
     case "failed":
       return "Izolace se nepovedla";
   }
 }
 
+const SOURCE_LABELS: Record<Story["source"], string> = {
+  realtime: "Hlídání složek",
+  program: "Spuštěný program",
+  startup: "Položka po přihlášení",
+  scan: "Kontrola",
+};
+
 export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (s: Screen) => void }) {
   const { settings, runtime, protection } = app;
   const realtime = protection?.components.find((c) => c.kind === "realTimeProtection")?.state;
-  const pendingDetections = runtime?.detections.filter((d) => d.action.type !== "quarantined") ?? [];
+  const stories = app.stories;
+  const pending = [...new Set(stories.filter((s) => s.outcome.type !== "quarantined").map((s) => s.finding.path))];
 
   return (
     <div className="screen">
@@ -35,6 +45,8 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
         soubor zkontroluje během pár sekund a škodlivý hned přesune do karantény. Co přibude, když
         AntiShield neběží, zkontroluje hned po spuštění. Spouštění programů zatím neblokuje.
       </p>
+
+      <RadarPanel app={app} />
 
       <section className={`panel protection-state tone-${realtime ? stateTone(realtime) : "off"}`}>
         <div className="panel-head">
@@ -116,35 +128,36 @@ export function Protection({ app, onNavigate }: { app: AntiShield; onNavigate: (
       </section>
 
       <section className="panel" aria-labelledby="detections-title">
-        <h2 id="detections-title">Zachycené hrozby</h2>
-        {runtime?.detections.length ? (
+        <h2 id="detections-title">Zachycené hrozby a jejich příběh</h2>
+        {stories.length ? (
           <ul className="detections">
-            {runtime.detections.map((d, i) => (
-              <li key={`${d.atMs}-${i}`} className={d.action.type === "quarantined" ? "tone-good" : "tone-alert"}>
+            {stories.map((story) => (
+              <li key={story.id} className={story.outcome.type === "quarantined" ? "tone-good" : "tone-alert"}>
                 <span className="dot" aria-hidden="true" />
                 <span className="detection-main">
-                  <strong>{d.finding.ruleName}</strong>
-                  <span className="muted">{displayPath(d.finding.path)}</span>
-                  {d.finding.origin ? <span className="muted">{originText(d.finding.origin)}</span> : null}
+                  <strong>{story.finding.ruleName}</strong>
+                  <span className="muted" title={displayPath(story.finding.path)}>
+                    {targetOf(story.finding.path).name}, {SOURCE_LABELS[story.source].toLowerCase()}
+                  </span>
+                  {story.finding.origin ? <span className="muted">{originText(story.finding.origin)}</span> : null}
                 </span>
                 <span className="detection-side">
-                  <span>{actionText(d.action)}</span>
-                  <time className="muted">{formatDateTime(d.atMs)}</time>
+                  <span>{outcomeText(story)}</span>
+                  <time className="muted">{formatDateTime(story.detectedAtMs)}</time>
                 </span>
+                <button type="button" className="btn-secondary small" onClick={() => app.openStory(story.id)}>
+                  Příběh útoku
+                </button>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="muted">Zatím nic. Až hlídání něco zachytí, uvidíte to tady a přijde oznámení.</p>
+          <p className="muted">Zatím nic. Až ochrana něco zachytí, uvidíte tady i celý příběh útoku: odkud hrozba přišla a co AntiShield udělal.</p>
         )}
-        {pendingDetections.length ? (
+        {pending.length ? (
           <div className="actions">
-            <button
-              type="button"
-              className="btn-danger"
-              onClick={() => void app.remediate(pendingDetections.map((d) => d.finding.path))}
-            >
-              Vyčistit zachycené ({pendingDetections.length})
+            <button type="button" className="btn-danger" onClick={() => void app.remediate(pending)}>
+              Vyčistit čekající ({pending.length})
             </button>
           </div>
         ) : null}

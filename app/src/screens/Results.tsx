@@ -1,3 +1,4 @@
+import { storyFor } from "../lib/story";
 import { Icon } from "../components/Icon";
 import type { Screen } from "../components/Sidebar";
 import {
@@ -92,15 +93,23 @@ export function Results({ app, onNavigate }: { app: AntiShield; onNavigate: (s: 
               const note = findingNote(first);
               const origin = describeOrigin(first.origin);
               const state = app.cleaning[path];
+              const story = storyFor(app.stories, path, first.sha256);
               return (
                 <li key={path} className={`finding${first.testOnly ? " is-test" : ""}${state && state !== "busy" && state.quarantined ? " is-clean" : ""}`}>
                   <div className="finding-head">
                     <p className="finding-path">{displayPath(path)}</p>
-                    {state === undefined ? (
-                      <button type="button" className="btn-danger small" onClick={() => void app.remediate([path])}>
-                        Vyčistit
-                      </button>
-                    ) : null}
+                    <span className="finding-actions">
+                      {story ? (
+                        <button type="button" className="btn-secondary small" onClick={() => app.openStory(story.id)}>
+                          Příběh útoku
+                        </button>
+                      ) : null}
+                      {state === undefined ? (
+                        <button type="button" className="btn-danger small" onClick={() => void app.remediate([path])}>
+                          Vyčistit
+                        </button>
+                      ) : null}
+                    </span>
                   </div>
                   {findings.map((f, i) => (
                     <div key={`${f.ruleId}-${i}`} className="finding-rule-block">

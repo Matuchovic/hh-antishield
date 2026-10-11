@@ -14,6 +14,7 @@ mod instance;
 mod services;
 mod settings;
 mod state;
+mod story;
 
 use std::sync::atomic::Ordering;
 
@@ -354,6 +355,7 @@ fn main() {
             commands::privacy_report,
             commands::update_rules_now,
             commands::runtime_info,
+            commands::threat_stories,
             commands::restart_app,
             commands::get_settings,
             commands::save_settings,

@@ -1,6 +1,6 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-11 (v0.4.1)
+Aktualizováno: 2026-10-12 (v0.5.0)
 
 ## Stav
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
@@ -9,6 +9,11 @@ Aktualizováno: 2026-10-11 (v0.4.1)
   enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
   Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
   0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.5.0: radar ochrany v reálném čase (přehled i obrazovka Ochrana; jen
+  skutečně zkontrolované položky, počty, živý přehled), příběh útoku ke každé
+  hrozbě (původ souboru, uložení, kdo program spustil, zachycení, zásah,
+  doporučení), živější jádro (vrstvy plazmatu, náklon za kurzorem, záblesk
+  při hrozbě, záře vrstvy, která kontrolu provedla, úvodní vlna).
 - v0.4.1: žádost o plný přístup k disku při spuštění (pozná povolení do 5 s,
   hned přidá hlídání příloh Apple Mail, nabídne restart); auditní log
   s výhradním zámkem a uzavřením poškozeného souboru (problém se hlásí jednou
@@ -39,7 +44,7 @@ Aktualizováno: 2026-10-11 (v0.4.1)
   složek, procesy a položky po spuštění, stav systému, audit, self-test.
 - `crates/antishield-cli` – `antishield` (scan, selftest, rules build/sign/
   verify, audit verify).
-- `app/` – Tauri 2 + React; 24 povolených příkazů, přísná CSP, služby na
+- `app/` – Tauri 2 + React; 25 povolených příkazů, přísná CSP, služby na
   pozadí (hlídání, pravidla po 6 h, plánovač), lišta, single-instance.
 
 ## Rozhodnutí
@@ -75,12 +80,26 @@ Aktualizováno: 2026-10-11 (v0.4.1)
   instanci (plugin single-instance).
 - Souhrn poslední kontroly se ukládá (`last-summary.json`) jen k zobrazení;
   nález z minulého spuštění se před vyčištěním znovu zkontroluje.
+- Příběh útoku vzniká při nálezu, dřív než se soubor izoluje a proces ukončí
+  (původ z metadat stažení: macOS WhereFroms a karanténní značka, Windows
+  Zone.Identifier, Linux xdg; nejvýš 64 KB, adresy bez parametrů a údajů).
+  Ukládá se (`stories.json`, 100 posledních) jen k zobrazení; o zásahu
+  nerozhoduje.
+- Radar ukazuje jen skutečné kontroly (žádná vymyšlená aktivita): dávky
+  z hlídání s počtem a nejvýš 6 názvy, hrozby vždy. Plátno v nečinnosti
+  30 snímků/s, se skrytým oknem a omezením pohybu stojí.
 - Animace jen transform/opacity, bez filtru blur a bez `will-change` na
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
 
-## Testy (2026-10-11, lokálně)
-- Rust: 93 testů na Linuxu (jádro 73, CLI 4, aplikace 16) + test PKG/DMG
+## Testy (2026-10-12, lokálně)
+- Rust: 104 testů na Linuxu (jádro 79, CLI 4, aplikace 21) + test PKG/DMG
   jen na macOS, clippy `-D warnings`, rustfmt.
+- UI: 18 testů vitest (příběh útoku: shrnutí, kroky, doporučení, aplikace
+  v balíčku, příloha e-mailu), typecheck, build.
+- 0.5: radar a příběh ověřené v Chromiu s náhradou IPC a proudem událostí
+  (body, zásah hrozby, živý přehled, Esc, Tab); s omezením pohybu plátno
+  stojí. V softwarovém vykreslování kontejneru nejde měřit skutečné snímky;
+  čas skriptů s radarem pod 2 % hlavního vlákna.
 - 0.4.1: žádost o přístup prošla v Chromiu s náhradou IPC (dotaz, čekání,
   restart, potvrzení, Esc, Tab, okno 1024 × 700); dlaždice bez překryvu
   v 1024, 1400 a 1850 px. Na Macu zatím neověřeno (TCC, launchd, restart).
@@ -118,6 +137,6 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Sloučit PR s 0.4.1 → Release (publish) → na Macu ověřit žádost o plný
-přístup, restart, zmizení oranžového Auditu a poslední kontrolu po restartu.
-Pak 0.5: radar ochrany v reálném čase, příběh útoku, nové jádro.
+Sloučit PR s 0.5.0 → Release (publish) → na Macu: stáhnout EICAR v prohlížeči
+(radar bod, záblesk jádra, příběh útoku s adresou a prohlížečem), spustit
+rychlou kontrolu (paprsek zrychlí), ověřit plynulost animací.
