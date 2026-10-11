@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-speed-report"
+description = "Enables the speed_report command without any pre-configured scope."
+commands.allow = ["speed_report"]
+
+[[permission]]
+identifier = "deny-speed-report"
+description = "Denies the speed_report command without any pre-configured scope."
+commands.deny = ["speed_report"]

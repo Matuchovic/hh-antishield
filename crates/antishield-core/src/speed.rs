@@ -1,26 +1,32 @@
 //! Zrychlení: co počítač skutečně brzdí, změřené, ne odhadnuté.
 //!
-//! Měří volné místo, tlak na paměť, vytížení procesoru a dobu běhu, najde
-//! náročné programy a položky spouštěné po přihlášení. Nabízí jen vratné nebo
-//! šetrné kroky: aplikaci požádá o ukončení (s dotazem na uložení práce),
-//! položku po přihlášení odloží do vlastní složky (jde vrátit). „Čištění RAM“
-//! ani zásahy do systému nedělá: počítač by tím nezrychlil.
+//! Měří volné místo, tlak na paměť, odkládání paměti na disk, vytížení
+//! procesoru a dobu běhu, najde náročné aplikace a položky spouštěné po
+//! přihlášení. Nabízí jen šetrné nebo vratné kroky: aplikaci požádá
+//! o ukončení (sama se zeptá na uložení práce), položku po přihlášení odloží
+//! do vlastní složky (jde vrátit). „Čištění RAM“ ani zásahy do systému nedělá:
+//! počítač by tím nezrychlil.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::error::EngineError;
-use crate::system::{is_system_program, program_from_plist};
+use crate::system::{
+    AppBundle, app_bundle_paths, is_system_program, program_from_plist, read_app_bundle,
+};
 
-/// Kolik náročných procesů ukázat.
+/// Kolik náročných aplikací ukázat.
 const MAX_HEAVY: usize = 8;
-/// Náročný proces: aspoň tento podíl celého procesoru, nebo tolik paměti.
+/// Náročná aplikace: aspoň tento podíl celého procesoru, nebo tolik paměti.
 const HEAVY_CPU_SHARE: f32 = 8.0;
 const HEAVY_MEMORY: u64 = 1536 * 1024 * 1024;
+/// Jak dlouho se po požadavku čeká, jestli program skončil.
+const QUIT_WAIT: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,17 +54,23 @@ pub struct MemoryInfo {
     pub pressure: Option<MemoryPressure>,
 }
 
+/// Aplikace (se všemi pomocnými procesy) nebo program, který zatěžuje počítač.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HeavyProcess {
+    /// Hlavní proces (u aplikace ten, který běží z balíčku přímo).
     pub pid: u32,
     pub name: String,
+    /// Program hlavního procesu.
     pub path: Option<String>,
-    /// Podíl celého procesoru (všech jader) v procentech.
+    /// Podíl celého procesoru (všech jader) v procentech, součet procesů.
     pub cpu: f32,
+    /// Paměť procesů dohromady (sdílené části se počítají vícekrát, je to horní odhad).
     pub memory: u64,
-    /// Aplikace (balíček .app): ukončí se šetrně, s dotazem na uložení.
+    pub processes: u32,
+    /// Aplikace: ukončí se běžným požadavkem (zeptá se na uložení práce).
     pub bundle_id: Option<String>,
+    pub app_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -90,32 +102,18 @@ pub struct SpeedReport {
     pub measured_at_ms: u64,
 }
 
+/// Jak dopadl požadavek na ukončení.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum QuitOutcome {
+    /// Program skončil.
+    Quit,
+    /// Požadavek odešel, program ještě běží (např. se ptá na uložení práce).
+    Pending,
+}
+
 fn entry_id(path: &Path) -> String {
     hex::encode(&Sha256::digest(path.to_string_lossy().as_bytes())[..8])
-}
-
-/// Balíček `.app`, ve kterém program leží, a jeho identifikátor.
-fn bundle_of(exe: &Path) -> Option<(PathBuf, String)> {
-    let bundle = exe
-        .ancestors()
-        .find(|a| a.extension().is_some_and(|e| e == "app"))?
-        .to_path_buf();
-    let info = plist::Value::from_file(bundle.join("Contents/Info.plist")).ok()?;
-    let id = info
-        .as_dictionary()?
-        .get("CFBundleIdentifier")?
-        .as_string()?
-        .to_string();
-    valid_bundle_id(&id).then_some((bundle, id))
-}
-
-/// Jen bezpečné znaky (identifikátor jde do příkazu AppleScriptu).
-fn valid_bundle_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 200
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
 }
 
 #[cfg(target_os = "macos")]
@@ -152,9 +150,9 @@ fn disk_for(home: &Path) -> Option<DiskInfo> {
 
 /// PID běžících uživatelských agentů podle `launchctl list` (PID, stav, jméno).
 #[cfg(target_os = "macos")]
-fn agent_pids() -> std::collections::HashMap<String, u32> {
+fn agent_pids() -> HashMap<String, u32> {
     let Ok(out) = Command::new("/bin/launchctl").arg("list").output() else {
-        return Default::default();
+        return HashMap::new();
     };
     String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -169,8 +167,8 @@ fn agent_pids() -> std::collections::HashMap<String, u32> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn agent_pids() -> std::collections::HashMap<String, u32> {
-    Default::default()
+fn agent_pids() -> HashMap<String, u32> {
+    HashMap::new()
 }
 
 /// Složka uživatelských položek po přihlášení, které jde vypnout.
@@ -194,6 +192,7 @@ fn startup_entries(
     system: &sysinfo::System,
 ) -> Vec<StartupEntry> {
     let pids = agent_pids();
+    // (složka, pro celý systém, zapnutá)
     let mut dirs: Vec<(PathBuf, bool, bool)> = vec![
         (user_startup_dir(home), false, true),
         (disabled_dir.to_path_buf(), false, false),
@@ -261,6 +260,106 @@ fn cores(system: &sysinfo::System) -> f32 {
     system.cpus().len().max(1) as f32
 }
 
+/// Aplikace s pomocníky nebo jeden program, jak se sčítá do přehledu.
+struct Group {
+    name: String,
+    bundle: Option<AppBundle>,
+    cpu: f32,
+    memory: u64,
+    processes: u32,
+    /// (PID, program, začátek běhu, běží přímo z balíčku)
+    main: Option<(u32, Option<PathBuf>, u64, bool)>,
+}
+
+/// Seskupí procesy: aplikaci macOS s pomocníky podle vnějšího balíčku `.app`,
+/// na Windows procesy stejného programu, jinak každý proces zvlášť.
+fn heavy_processes(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> {
+    let share = cores(system);
+    let own_exe = std::env::current_exe().ok();
+    let own_bundle = own_exe
+        .as_deref()
+        .and_then(|e| app_bundle_paths(e).into_iter().next());
+    let mut bundles: HashMap<PathBuf, Option<AppBundle>> = HashMap::new();
+    let mut groups: HashMap<String, Group> = HashMap::new();
+    for (pid, process) in system.processes() {
+        let pid = pid.as_u32();
+        let exe = process.exe().map(Path::to_path_buf);
+        if pid == own_pid
+            || exe.as_deref().is_some_and(is_system_program)
+            || (exe.is_some() && exe == own_exe)
+        {
+            continue;
+        }
+        let outer = exe
+            .as_deref()
+            .and_then(|e| app_bundle_paths(e).into_iter().next());
+        if outer.is_some() && outer == own_bundle {
+            continue;
+        }
+        let bundle = outer.as_ref().and_then(|path| {
+            bundles
+                .entry(path.clone())
+                .or_insert_with(|| read_app_bundle(path))
+                .clone()
+        });
+        let key = match (&bundle, &exe) {
+            (Some(b), _) => format!("app:{}", b.path.display()),
+            (None, Some(e)) if cfg!(windows) => format!("exe:{}", e.display()),
+            _ => format!("pid:{pid}"),
+        };
+        let name: String = process.name().to_string_lossy().chars().take(120).collect();
+        let group = groups.entry(key).or_insert_with(|| Group {
+            name: bundle.as_ref().map_or(name, |b| b.name.clone()),
+            bundle: bundle.clone(),
+            cpu: 0.0,
+            memory: 0,
+            processes: 0,
+            main: None,
+        });
+        group.cpu += process.cpu_usage() / share;
+        group.memory = group.memory.saturating_add(process.memory());
+        group.processes += 1;
+        // Hlavní proces aplikace běží přímo z Contents/MacOS; jinak nejstarší.
+        let direct = match (&bundle, &exe) {
+            (Some(b), Some(e)) => e.parent() == Some(b.path.join("Contents/MacOS").as_path()),
+            _ => true,
+        };
+        let start = process.start_time();
+        let better = group
+            .main
+            .as_ref()
+            .is_none_or(|(_, _, old_start, old_direct)| {
+                (direct && !old_direct) || (direct == *old_direct && start < *old_start)
+            });
+        if better {
+            group.main = Some((pid, exe.clone(), start, direct));
+        }
+    }
+    let mut heavy: Vec<HeavyProcess> = groups
+        .into_values()
+        .filter(|g| g.cpu >= HEAVY_CPU_SHARE || g.memory >= HEAVY_MEMORY)
+        .filter_map(|g| {
+            let (pid, exe, _, _) = g.main?;
+            Some(HeavyProcess {
+                pid,
+                name: g.name,
+                path: exe.map(|e| e.to_string_lossy().into_owned()),
+                cpu: g.cpu,
+                memory: g.memory,
+                processes: g.processes,
+                bundle_id: g.bundle.as_ref().map(|b| b.id.clone()),
+                app_path: g
+                    .bundle
+                    .as_ref()
+                    .map(|b| b.path.to_string_lossy().into_owned()),
+            })
+        })
+        .collect();
+    heavy.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory)));
+    heavy.truncate(MAX_HEAVY);
+    heavy
+}
+
 /// Změří stav počítače. Trvá asi sekundu (vytížení procesoru se měří mezi dvěma vzorky).
 pub fn measure(home: &Path, disabled_dir: &Path, own_label: &str, own_pid: u32) -> SpeedReport {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};
@@ -276,30 +375,6 @@ pub fn measure(home: &Path, disabled_dir: &Path, own_label: &str, own_pid: u32) 
     system.refresh_cpu_usage();
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, kind);
 
-    let share = cores(&system);
-    let mut heavy: Vec<HeavyProcess> = system
-        .processes()
-        .iter()
-        .filter(|(pid, _)| pid.as_u32() != own_pid)
-        .filter_map(|(pid, p)| {
-            let exe = p.exe().map(Path::to_path_buf);
-            if exe.as_deref().is_some_and(is_system_program) {
-                return None;
-            }
-            let cpu = p.cpu_usage() / share;
-            (cpu >= HEAVY_CPU_SHARE || p.memory() >= HEAVY_MEMORY).then(|| HeavyProcess {
-                pid: pid.as_u32(),
-                name: p.name().to_string_lossy().chars().take(120).collect(),
-                path: exe.as_ref().map(|e| e.to_string_lossy().into_owned()),
-                cpu,
-                memory: p.memory(),
-                bundle_id: exe.as_deref().and_then(bundle_of).map(|(_, id)| id),
-            })
-        })
-        .collect();
-    heavy.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory)));
-    heavy.truncate(MAX_HEAVY);
-
     SpeedReport {
         disk: disk_for(home),
         memory: MemoryInfo {
@@ -311,56 +386,109 @@ pub fn measure(home: &Path, disabled_dir: &Path, own_label: &str, own_pid: u32) 
         cpu: system.global_cpu_usage(),
         cores: system.cpus().len(),
         uptime_secs: System::uptime(),
-        heavy,
+        heavy: heavy_processes(&system, own_pid),
         startup: startup_entries(home, disabled_dir, own_label, &system),
         measured_at_ms: crate::now_ms(),
     }
 }
 
-/// Požádá proces o ukončení. Aplikace dostane běžný požadavek na ukončení
-/// (zeptá se na uložení práce); ostatní procesy signál SIGTERM. Ověří, že PID
-/// pořád patří stejnému programu, a systémové programy neukončuje.
-pub fn quit_process(pid: u32, expected_exe: &Path, own_pid: u32) -> Result<(), EngineError> {
-    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, Signal, System, UpdateKind};
-    if pid == own_pid || is_system_program(expected_exe) {
-        return Err(EngineError::InvalidRequest(
-            "this process cannot be quit".into(),
-        ));
-    }
-    let mut system = System::new();
+/// Běží proces pořád stejný program? (ochrana proti opětovnému použití PID)
+fn still_running(pid: u32, exe: &Path) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     let target = Pid::from_u32(pid);
+    let mut system = System::new();
     system.refresh_processes_specifics(
         ProcessesToUpdate::Some(&[target]),
         true,
         ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
     );
-    let process = system
-        .process(target)
-        .ok_or_else(|| EngineError::InvalidRequest("the process is no longer running".into()))?;
-    if process.exe() != Some(expected_exe) {
-        return Err(EngineError::InvalidRequest(
-            "the process no longer runs the same program".into(),
-        ));
+    system.process(target).and_then(|p| p.exe()) == Some(exe)
+}
+
+fn wait_for_exit(pid: u32, exe: &Path) -> QuitOutcome {
+    let deadline = Instant::now() + QUIT_WAIT;
+    while Instant::now() < deadline {
+        if !still_running(pid, exe) {
+            return QuitOutcome::Quit;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    QuitOutcome::Pending
+}
+
+/// Požádá aplikaci nebo program o běžné ukončení. Aplikace dostane stejný
+/// požadavek jako po ⌘Q (zeptá se na uložení práce); program signál SIGTERM,
+/// na Windows zavření oken. Nic neukončuje násilím, systémové programy ani
+/// AntiShield neukončí a ověří, že PID pořád patří stejnému programu.
+pub fn quit_process(target: &HeavyProcess, own_pid: u32) -> Result<QuitOutcome, EngineError> {
+    let refuse = |reason: &str| Err(EngineError::InvalidRequest(reason.into()));
+    let Some(exe) = target.path.as_deref().map(Path::new) else {
+        return refuse("the program is unknown");
+    };
+    if target.pid == own_pid || is_system_program(exe) {
+        return refuse("this program cannot be quit");
+    }
+    if !still_running(target.pid, exe) {
+        return Ok(QuitOutcome::Quit);
     }
     if cfg!(target_os = "macos")
-        && let Some((_, id)) = bundle_of(expected_exe)
+        && let Some(id) = target.bundle_id.as_deref()
     {
+        if !crate::system::valid_bundle_id(id) {
+            return refuse("invalid app identifier");
+        }
+        // Bez čekání na odpověď: aplikace se může ptát na uložení práce.
         let script = format!("tell application id \"{id}\" to quit");
-        let status = Command::new("/usr/bin/osascript")
-            .args(["-e", &script])
-            .status()
+        let out = Command::new("/usr/bin/osascript")
+            .args([
+                "-e",
+                "ignoring application responses",
+                "-e",
+                script.as_str(),
+                "-e",
+                "end ignoring",
+            ])
+            .output()
             .map_err(|e| EngineError::InvalidRequest(e.to_string()))?;
-        return if status.success() {
-            Ok(())
-        } else {
-            Err(EngineError::InvalidRequest("the app did not quit".into()))
-        };
+        if !out.status.success() {
+            let detail = String::from_utf8_lossy(&out.stderr);
+            return if detail.contains("-1743") {
+                refuse("automation not allowed")
+            } else {
+                refuse("the app did not accept the request")
+            };
+        }
+        return Ok(wait_for_exit(target.pid, exe));
     }
-    match process.kill_with(Signal::Term) {
-        Some(true) => Ok(()),
-        _ => Err(EngineError::InvalidRequest(
-            "the process could not be quit".into(),
-        )),
+    #[cfg(windows)]
+    {
+        // Bez /F: program dostane požadavek na zavření oken (může se ptát na uložení).
+        let windir = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let taskkill = PathBuf::from(windir).join(r"System32\taskkill.exe");
+        let status = Command::new(taskkill)
+            .args(["/PID", &target.pid.to_string()])
+            .output()
+            .map_err(|e| EngineError::InvalidRequest(e.to_string()))?
+            .status;
+        if !status.success() {
+            return refuse("the program has no window to close");
+        }
+        Ok(wait_for_exit(target.pid, exe))
+    }
+    #[cfg(not(windows))]
+    {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, Signal, System};
+        let pid = Pid::from_u32(target.pid);
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[pid]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        match system.process(pid).and_then(|p| p.kill_with(Signal::Term)) {
+            Some(true) => Ok(wait_for_exit(target.pid, exe)),
+            _ => refuse("the program could not be asked to quit"),
+        }
     }
 }
 
@@ -374,8 +502,8 @@ fn launchctl(args: &[&str]) {
         .filter(|u| !u.is_empty() && u.chars().all(|c| c.is_ascii_digit()));
     let Some(uid) = uid else { return };
     let domain = format!("gui/{uid}");
-    let mut full: Vec<&str> = vec![args[0], &domain];
-    full.extend(&args[1..]);
+    let mut full: Vec<&str> = vec![args[0], domain.as_str()];
+    full.extend_from_slice(&args[1..]);
     let _ = Command::new("/bin/launchctl").args(&full).output();
 }
 
@@ -464,6 +592,7 @@ mod tests {
         assert!(report.cores > 0);
         assert!(report.cpu >= 0.0);
         assert!(report.heavy.iter().all(|p| p.pid != std::process::id()));
+        assert!(report.heavy.iter().all(|p| p.processes >= 1));
     }
 
     #[test]
@@ -494,14 +623,75 @@ mod tests {
         );
     }
 
+    fn target(pid: u32, path: &Path, bundle_id: Option<&str>) -> HeavyProcess {
+        HeavyProcess {
+            pid,
+            name: "x".into(),
+            path: Some(path.to_string_lossy().into_owned()),
+            cpu: 50.0,
+            memory: 0,
+            processes: 1,
+            bundle_id: bundle_id.map(str::to_string),
+            app_path: None,
+        }
+    }
+
     #[test]
-    fn system_programs_and_self_are_never_quit() {
+    fn system_programs_self_and_unknown_programs_are_never_quit() {
         let me = std::process::id();
         let exe = std::env::current_exe().unwrap();
-        assert!(quit_process(me, &exe, me).is_err());
+        assert!(quit_process(&target(me, &exe, None), me).is_err());
         #[cfg(unix)]
-        assert!(quit_process(1, Path::new("/sbin/launchd"), me).is_err());
-        assert!(valid_bundle_id("com.google.Chrome"));
-        assert!(!valid_bundle_id("x\" to do shell script \"rm"));
+        assert!(quit_process(&target(1, Path::new("/sbin/launchd"), None), me).is_err());
+        let unknown = HeavyProcess {
+            path: None,
+            ..target(1, &exe, None)
+        };
+        assert!(quit_process(&unknown, me).is_err());
+        // PID, který už patří jinému programu, se nijak nedotkne.
+        assert_eq!(
+            quit_process(&target(me, Path::new("/nonexistent/app"), None), u32::MAX).unwrap(),
+            QuitOutcome::Quit
+        );
+        assert!(crate::system::valid_bundle_id("com.google.Chrome"));
+        assert!(!crate::system::valid_bundle_id(
+            "x\" to do shell script \"rm"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_program_is_asked_to_quit_and_its_exit_is_confirmed() {
+        // Systémový `sleep` zůstane netknutý.
+        let mut system_sleep = Command::new("sleep").arg("30").spawn().unwrap();
+        let exe = exe_of(system_sleep.id());
+        assert!(is_system_program(&exe), "{exe:?}");
+        assert!(quit_process(&target(system_sleep.id(), &exe, None), std::process::id()).is_err());
+        system_sleep.kill().unwrap();
+        let _ = system_sleep.wait();
+
+        // Kopie mimo systém (jako program uživatele) dostane SIGTERM a skončí.
+        let tmp = tempfile::tempdir().unwrap();
+        let copy = tmp.path().join("busy-tool");
+        std::fs::copy(&exe, &copy).unwrap();
+        let mut child = Command::new(&copy).arg("30").spawn().unwrap();
+        let exe = exe_of(child.id());
+        let outcome = quit_process(&target(child.id(), &exe, None), std::process::id());
+        let status = child.wait().unwrap();
+        assert_eq!(outcome.unwrap(), QuitOutcome::Quit);
+        assert!(!status.success(), "ended by the request, not by itself");
+    }
+
+    #[cfg(unix)]
+    fn exe_of(pid: u32) -> PathBuf {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+        let mut system = System::new();
+        let target = Pid::from_u32(pid);
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[target]),
+            true,
+            ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
+        );
+        system.process(target).unwrap().exe().unwrap().to_path_buf()
     }
 }

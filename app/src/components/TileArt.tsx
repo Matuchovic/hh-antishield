@@ -1,6 +1,6 @@
 // Skleněné ilustrace pro dlaždice na přehledu (dekorace).
 
-export type TileArtKind = "folder" | "lock" | "wrench";
+export type TileArtKind = "folder" | "lock" | "wrench" | "vortex";
 
 function Defs({ id }: { id: string }) {
   return (
@@ -40,6 +40,18 @@ export function TileArt({ kind }: { kind: TileArtKind }) {
           <rect x="44" y="46" width="72" height="50" rx="10" fill={`url(#${id}-b)`} stroke="#b9dcff" strokeOpacity="0.7" />
           <circle cx="80" cy="66" r="7" fill="#e3f1ff" />
           <path d="M80 70v12" stroke="#e3f1ff" strokeWidth="5" strokeLinecap="round" />
+        </g>
+      ) : null}
+      {kind === "vortex" ? (
+        <g>
+          <ellipse cx="80" cy="58" rx="62" ry="19" fill="none" stroke="#8cc4ff" strokeOpacity="0.35" strokeWidth="2" />
+          <ellipse cx="80" cy="58" rx="44" ry="13" fill="none" stroke="#b9dcff" strokeOpacity="0.5" strokeWidth="2" />
+          <circle cx="80" cy="58" r="17" fill={`url(#${id}-b)`} stroke="#b9dcff" strokeOpacity="0.8" />
+          <circle cx="74" cy="52" r="5" fill="#e3f1ff" opacity="0.85" />
+          <circle cx="132" cy="54" r="3.5" fill="#e3f1ff" />
+          <circle cx="41" cy="66" r="2.5" fill="#8cc4ff" />
+          <circle cx="104" cy="70" r="3" fill="#b9dcff" />
+          <circle cx="57" cy="47" r="2" fill="#e3f1ff" opacity="0.8" />
         </g>
       ) : null}
       {kind === "wrench" ? (

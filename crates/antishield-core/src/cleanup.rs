@@ -33,6 +33,10 @@ const LARGE_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const STALE_FILE_MS: u64 = 180 * DAY_MS;
 /// Kolik velkých souborů nejvýš ukázat.
 const MAX_LARGE_FILES: usize = 40;
+/// Mezipaměť změněná v posledních minutách se právě používá: nabídne se,
+/// ale nepředvybere. Dočasné soubory Windows se nepředvyberou ani den.
+const IN_USE_MS: u64 = 15 * 60 * 1000;
+const TEMP_IN_USE_MS: u64 = DAY_MS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -137,7 +141,7 @@ fn allocated(meta: &std::fs::Metadata) -> u64 {
     meta.len()
 }
 
-/// Velikost, počet souborů a poslední změna (soubor i složka, bez odkazů).
+/// Velikost, počet souborů a poslední změna souboru (bez odkazů).
 fn measure(path: &Path, deadline: Instant) -> (u64, u64, Option<u64>, bool) {
     let mut bytes = 0u64;
     let mut files = 0u64;
@@ -155,9 +159,9 @@ fn measure(path: &Path, deadline: Instant) -> (u64, u64, Option<u64>, bool) {
         if meta.is_file() {
             files += 1;
             bytes = bytes.saturating_add(allocated(&meta));
-        }
-        if let Some(ms) = meta.modified().ok().and_then(epoch_ms) {
-            newest = Some(newest.map_or(ms, |n| n.max(ms)));
+            if let Some(ms) = meta.modified().ok().and_then(epoch_ms) {
+                newest = Some(newest.map_or(ms, |n| n.max(ms)));
+            }
         }
     }
     (bytes, files, newest, complete)
@@ -229,17 +233,17 @@ impl Scanner<'_> {
         recommended: bool,
         note: Option<&str>,
         min_bytes: u64,
-    ) {
+    ) -> Option<&mut CleanItem> {
         // Odkazy nikdy (ani na položce samé).
         if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
-            return;
+            return None;
         }
         let (bytes, files, modified_ms, complete) = measure(path, self.deadline);
         if !complete {
             self.out.complete = false;
         }
         if bytes < min_bytes {
-            return;
+            return None;
         }
         self.out.items.push(CleanItem {
             id: item_id(path),
@@ -253,6 +257,7 @@ impl Scanner<'_> {
             method,
             note: note.map(str::to_string),
         });
+        self.out.items.last_mut()
     }
 
     fn app_caches(&mut self, dir: &Path) {
@@ -265,7 +270,13 @@ impl Scanner<'_> {
                 continue;
             }
             let running = self.ctx.running_bundles.contains(&name);
-            self.push(
+            let now = self.ctx.now_ms;
+            let window = if cfg!(windows) {
+                TEMP_IN_USE_MS
+            } else {
+                IN_USE_MS
+            };
+            if let Some(item) = self.push(
                 CleanCategory::AppCaches,
                 &path,
                 name,
@@ -273,7 +284,14 @@ impl Scanner<'_> {
                 !running,
                 running.then_some("app is running"),
                 512 * 1024,
-            );
+            ) && !running
+                && item
+                    .modified_ms
+                    .is_some_and(|ms| now.saturating_sub(ms) < window)
+            {
+                item.recommended = false;
+                item.note = Some("in use".into());
+            }
         }
     }
 
@@ -804,9 +822,17 @@ mod tests {
         let h = tmp.path();
         let paths = layout(h);
         let caches = paths.caches[0].clone();
-        for app in ["com.vendor.app", "com.apple.Safari", "com.running.app"] {
+        for app in [
+            "com.vendor.app",
+            "com.apple.Safari",
+            "com.running.app",
+            "com.busy.app",
+        ] {
             fs::create_dir_all(caches.join(app)).unwrap();
             fs::write(caches.join(app).join("blob"), vec![1u8; 2 << 20]).unwrap();
+            if app != "com.busy.app" {
+                set_old(&caches.join(app).join("blob"), 2);
+            }
         }
         if let Some(logs) = paths.logs.first() {
             fs::create_dir_all(logs).unwrap();
@@ -835,6 +861,20 @@ mod tests {
             .find(|i| i.name == "com.running.app")
             .unwrap();
         assert!(!running.recommended);
+        // Právě zapisovaná mezipaměť se nabídne, ale nepředvybere.
+        let busy = result
+            .items
+            .iter()
+            .find(|i| i.name == "com.busy.app")
+            .unwrap();
+        assert!(!busy.recommended);
+        assert_eq!(busy.note.as_deref(), Some("in use"));
+        let vendor = result
+            .items
+            .iter()
+            .find(|i| i.name == "com.vendor.app")
+            .unwrap();
+        assert!(vendor.recommended && vendor.note.is_none());
 
         let picked: Vec<_> = result
             .items
@@ -852,6 +892,7 @@ mod tests {
             "installers go to the Trash"
         );
         assert!(caches.join("com.running.app").exists());
+        assert!(caches.join("com.busy.app").exists());
         assert!(outcome.freed_bytes > 0 && outcome.trashed_bytes > 0);
     }
 

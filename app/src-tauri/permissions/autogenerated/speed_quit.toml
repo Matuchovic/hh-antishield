@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-speed-quit"
+description = "Enables the speed_quit command without any pre-configured scope."
+commands.allow = ["speed_quit"]
+
+[[permission]]
+identifier = "deny-speed-quit"
+description = "Denies the speed_quit command without any pre-configured scope."
+commands.deny = ["speed_quit"]

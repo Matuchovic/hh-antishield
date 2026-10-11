@@ -27,6 +27,14 @@ fn main() {
         "pick_watch_folder",
         "check_update",
         "install_update",
+        "clean_scan",
+        "clean_cancel",
+        "clean_last",
+        "clean_items",
+        "clean_empty_trash",
+        "speed_report",
+        "speed_quit",
+        "speed_startup",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");

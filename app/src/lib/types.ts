@@ -373,3 +373,83 @@ export interface CatchUp {
 export type RuleUpdateOutcome =
   | { type: "installed"; rulePack: RulePackInfo }
   | { type: "upToDate"; rulePack: RulePackInfo };
+
+// ---------- Čištění a zrychlení ----------
+
+export type CleanCategory =
+  | "appCaches"
+  | "logs"
+  | "developer"
+  | "installers"
+  | "leftovers"
+  | "largeFiles"
+  | "trash";
+
+/** Jak se položka uklidí: smazat (vytvoří se znovu), do Koše (jde vrátit), vysypat Koš (nevratné). */
+export type CleanMethod = "delete" | "moveToTrash" | "emptyTrash";
+
+export interface CleanItem {
+  id: string;
+  category: CleanCategory;
+  path: string;
+  name: string;
+  bytes: number;
+  files: number;
+  modifiedMs: number | null;
+  recommended: boolean;
+  method: CleanMethod;
+  note: string | null;
+}
+
+export interface CleanScan {
+  items: CleanItem[];
+  startedAtMs: number;
+  finishedAtMs: number;
+  complete: boolean;
+  unreadable: string[];
+}
+
+export interface CleanOutcome {
+  freedBytes: number;
+  trashedBytes: number;
+  cleaned: string[];
+  failed: { id: string; reason: string }[];
+}
+
+export type MemoryPressure = "normal" | "warning" | "critical";
+
+export interface HeavyProcess {
+  pid: number;
+  name: string;
+  path: string | null;
+  cpu: number;
+  memory: number;
+  processes: number;
+  bundleId: string | null;
+  appPath: string | null;
+}
+
+export interface StartupEntry {
+  id: string;
+  label: string;
+  plist: string;
+  program: string | null;
+  system: boolean;
+  enabled: boolean;
+  pid: number | null;
+  cpu: number;
+  memory: number;
+}
+
+export interface SpeedReport {
+  disk: { total: number; free: number } | null;
+  memory: { total: number; used: number; swapUsed: number; pressure: MemoryPressure | null };
+  cpu: number;
+  cores: number;
+  uptimeSecs: number;
+  heavy: HeavyProcess[];
+  startup: StartupEntry[];
+  measuredAtMs: number;
+}
+
+export type QuitOutcome = "quit" | "pending";

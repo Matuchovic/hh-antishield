@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-speed-startup"
+description = "Enables the speed_startup command without any pre-configured scope."
+commands.allow = ["speed_startup"]
+
+[[permission]]
+identifier = "deny-speed-startup"
+description = "Denies the speed_startup command without any pre-configured scope."
+commands.deny = ["speed_startup"]

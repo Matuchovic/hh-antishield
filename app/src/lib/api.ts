@@ -5,6 +5,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Activity,
   AuditEvent,
+  CleanCategory,
+  CleanOutcome,
+  CleanScan,
+  QuitOutcome,
+  SpeedReport,
   Detection,
   PostureCheck,
   PrivacyReport,
@@ -53,7 +58,20 @@ export const api = {
   pickWatchFolder: () => invoke<string | null>("pick_watch_folder"),
   checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
   installUpdate: () => invoke<void>("install_update"),
+  cleanScan: () => invoke<CleanScan>("clean_scan"),
+  cleanCancel: () => invoke<void>("clean_cancel"),
+  cleanLast: () => invoke<CleanScan | null>("clean_last"),
+  cleanItems: (ids: string[]) => invoke<CleanOutcome>("clean_items", { ids }),
+  cleanEmptyTrash: () => invoke<CleanOutcome>("clean_empty_trash"),
+  speedReport: () => invoke<SpeedReport>("speed_report"),
+  speedQuit: (pid: number) => invoke<QuitOutcome>("speed_quit", { pid }),
+  speedStartup: (id: string, enabled: boolean) => invoke<SpeedReport>("speed_startup", { id, enabled }),
 };
+
+/** Čištění: kategorie, kterou sken právě prochází. */
+export function onCleanProgress(handler: (category: CleanCategory) => void): Promise<UnlistenFn> {
+  return listen<CleanCategory>("clean-progress", (message) => handler(message.payload));
+}
 
 export function onScanEvent(handler: (event: ScanEvent) => void): Promise<UnlistenFn> {
   return listen<ScanEvent>("scan-event", (message) => handler(message.payload));

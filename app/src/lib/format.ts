@@ -264,6 +264,16 @@ const ERRORS: Record<string, string> = {
     "Aktualizovat jde jen aplikaci ve složce Aplikace. Ukončete AntiShield, přetáhněte ho z DMG do Aplikací a spusťte odtud.",
   scan_running: "Počkejte na konec kontroly, pak aktualizujte.",
   no_update: "Žádná aktualizace není připravená. Zkontrolujte aktualizace znovu.",
+  clean_running: "Hledání už běží.",
+  clean_unknown: "Vybrané položky už v posledním hledání nejsou. Hledejte znovu.",
+  no_home: "Domovskou složku nejde zjistit.",
+  speed_unknown: "Údaje se mezitím změnily. Změřte stav znovu.",
+  startup_system: "Položky pro celý systém se zapínají a vypínají v Nastavení systému.",
+  quit_automation_denied:
+    "macOS nedovolil aplikaci požádat o ukončení. Povolte to v Nastavení systému → Soukromí a zabezpečení → Automatizace, nebo ji ukončete sami (⌘Q).",
+  quit_no_window: "Program nemá okno, které by šlo zavřít. Ukončete ho sami.",
+  quit_protected: "Tento program AntiShield neukončuje.",
+  quit_failed: "Aplikace požadavek na ukončení nepřijala. Ukončete ji sami (⌘Q).",
 };
 
 export function describeError(error: ErrorDto): string {
