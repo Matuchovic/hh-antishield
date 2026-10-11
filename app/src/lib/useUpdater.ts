@@ -1,6 +1,6 @@
-// Aktualizace aplikace. Kontrola po startu a pak každých 6 hodin; instaluje se
-// jen na pokyn uživatele. Podpis ověřuje backend, rozhraní jen ukazuje stav.
-import { useCallback, useEffect, useState } from "react";
+// Aktualizace aplikace. Kontrola hned po startu, pak každých 5 minut a při
+// návratu do okna; instaluje se jen na pokyn uživatele. Podpis ověřuje backend, rozhraní jen ukazuje stav.
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, asError, onUpdateProgress } from "./api";
 import type { ErrorDto, UpdateInfo, UpdateProgress } from "./types";
 
@@ -17,8 +17,10 @@ export interface Updater {
   dismiss: () => void;
 }
 
-const FIRST_CHECK_MS = 4_000;
-const CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
+const FIRST_CHECK_MS = 1_000;
+const CHECK_EVERY_MS = 5 * 60 * 1000;
+/** Při návratu do okna nejvýš jednou za minutu. */
+const FOCUS_MIN_GAP_MS = 60 * 1000;
 
 export function useUpdater(): Updater {
   const [status, setStatus] = useState<UpdateStatus>("idle");
@@ -26,9 +28,15 @@ export function useUpdater(): Updater {
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
   const [error, setError] = useState<ErrorDto | null>(null);
   const [dismissed, setDismissed] = useState(false);
+  const busy = useRef(false);
+  const lastCheck = useRef(0);
 
   const check = useCallback(async () => {
-    setStatus("checking");
+    if (busy.current) return;
+    busy.current = true;
+    lastCheck.current = Date.now();
+    // Už nabízený banner během opakované kontroly nezmizí.
+    setStatus((current) => (current === "available" ? current : "checking"));
     setError(null);
     try {
       const found = await api.checkUpdate();
@@ -38,10 +46,13 @@ export function useUpdater(): Updater {
     } catch (e) {
       setError(asError(e));
       setStatus("error");
+    } finally {
+      busy.current = false;
     }
   }, []);
 
   const install = useCallback(async () => {
+    busy.current = true;
     setStatus("installing");
     setProgress(null);
     setError(null);
@@ -59,16 +70,25 @@ export function useUpdater(): Updater {
     } catch (e) {
       setError(asError(e));
       setStatus("error");
+    } finally {
+      busy.current = false;
     }
   }, []);
 
   useEffect(() => {
     const first = window.setTimeout(() => void check(), FIRST_CHECK_MS);
     const every = window.setInterval(() => void check(), CHECK_EVERY_MS);
+    const onReturn = () => {
+      if (!document.hidden && Date.now() - lastCheck.current >= FOCUS_MIN_GAP_MS) void check();
+    };
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     const unlisten = onUpdateProgress(setProgress);
     return () => {
       window.clearTimeout(first);
       window.clearInterval(every);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
       void unlisten.then((fn) => fn());
     };
   }, [check]);

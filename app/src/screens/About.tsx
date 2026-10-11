@@ -13,7 +13,7 @@ const NOTICES: { name: string; license: string }[] = [
 ];
 
 const UPDATE_TEXT = {
-  idle: "Aplikace kontroluje aktualizace po spuštění a pak každých 6 hodin.",
+  idle: "Aplikace kontroluje aktualizace hned po spuštění, každých 5 minut a při návratu do okna.",
   checking: "Kontroluji…",
   upToDate: "Máte nejnovější verzi.",
   installing: "Instaluji aktualizaci…",
