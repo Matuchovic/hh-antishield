@@ -1,7 +1,8 @@
 // Stav rozhraní: data z enginu, nastavení, ochrana na pozadí a průběh kontroly.
 // Rozhraní nic nepředpokládá, vše zobrazuje podle toho, co hlásí backend.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, asError, onAppEvent, onScanEvent } from "./api";
+import { api, asError, onActivity, onAppEvent, onScanEvent } from "./api";
+import { emitPulse } from "./radar";
 import { playCleaned, playScanDone, playScanStart, playThreat, setSoundEnabled } from "./sound";
 import type {
   AuditEvent,
@@ -20,6 +21,7 @@ import type {
   Selection,
   SelfTestReport,
   Settings,
+  Story,
 } from "./types";
 
 export interface ScanState {
@@ -32,6 +34,12 @@ export interface ScanState {
 
 const IDLE: ScanState = { scanId: null, running: false, roots: [], progress: null, liveFindings: [] };
 const STATUS_REFRESH_MS = 10_000;
+/** Kolik posledních kontrol drží přehled (stejně jako backend). */
+const MAX_RECENT = 30;
+
+function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
 
 export function useAntiShield() {
   const [protection, setProtection] = useState<ProtectionSummary | null>(null);
@@ -49,7 +57,10 @@ export function useAntiShield() {
   const [cleaning, setCleaning] = useState<Record<string, "busy" | RemediationReport>>({});
   const [rulesBusy, setRulesBusy] = useState(false);
   const [error, setError] = useState<ErrorDto | null>(null);
+  const [stories, setStories] = useState<Story[]>([]);
+  const [storyId, setStoryId] = useState<string | null>(null);
   const scanIdRef = useRef<string | null>(null);
+  const lastScanPath = useRef<string | null>(null);
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -68,8 +79,17 @@ export function useAntiShield() {
     }
   }, []);
 
+  const refreshStories = useCallback(async () => {
+    try {
+      setStories(await api.threatStories());
+    } catch {
+      // Starší backend nebo engine ještě startuje: příběhy se načtou později.
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     await refreshStatus();
+    await refreshStories();
     try {
       setInfo(await api.engineInfo());
       setEngineError(null);
@@ -79,7 +99,7 @@ export function useAntiShield() {
       setEngineError(asError(e));
     }
     await refreshQuarantine();
-  }, [refreshStatus, refreshQuarantine]);
+  }, [refreshStatus, refreshQuarantine, refreshStories]);
 
   useEffect(() => {
     void api.getSettings().then((loaded) => {
@@ -98,11 +118,18 @@ export function useAntiShield() {
       }
       if (scanIdRef.current && event.scanId !== scanIdRef.current) return;
       switch (event.type) {
-        case "progress":
+        case "progress": {
           setScan((s) => ({ ...s, progress: event.progress }));
+          const current = event.progress.currentPath;
+          if (current && current !== lastScanPath.current) {
+            lastScanPath.current = current;
+            emitPulse({ kind: "scan", name: baseName(current), threat: false, atMs: Date.now() });
+          }
           break;
+        }
         case "findingDetected":
           setScan((s) => ({ ...s, liveFindings: [...s.liveFindings, event.finding] }));
+          emitPulse({ kind: "scan", name: baseName(event.finding.path), threat: true, atMs: Date.now() });
           break;
         case "finished":
           scanIdRef.current = null;
@@ -120,6 +147,32 @@ export function useAntiShield() {
       onAppEvent<unknown>("quarantine-changed", () => void refreshQuarantine()),
       // Povolený nebo odebraný plný přístup k disku mění hlídané složky.
       onAppEvent<boolean | null>("access-changed", () => void refresh()),
+      onAppEvent<unknown>("stories-changed", () => void refreshStories()),
+      // Radar: skutečné kontroly z hlídání (pulzy pro animaci a živý přehled).
+      onActivity((activity) => {
+        for (const sample of activity.samples) {
+          emitPulse({ kind: activity.kind, name: sample.name, threat: sample.threat, atMs: activity.atMs });
+        }
+        setRuntime((current) => {
+          if (!current) return current;
+          const log = current.activity;
+          const key = ({ download: "downloads", file: "files", mail: "mail", program: "programs", startup: "startup" } as const)[activity.kind];
+          const recent = [
+            ...activity.samples.map((s) => ({ atMs: activity.atMs, kind: activity.kind, name: s.name, threat: s.threat })),
+            ...log.recent,
+          ].slice(0, MAX_RECENT);
+          return {
+            ...current,
+            activity: {
+              ...log,
+              sinceMs: log.sinceMs ?? activity.atMs,
+              [key]: log[key] + activity.count,
+              threats: log.threats + activity.samples.filter((s) => s.threat).length,
+              recent,
+            },
+          };
+        });
+      }),
       onAppEvent<Detection>("protection-event", (detection) => {
         if (detection.action.type === "quarantined") playCleaned();
         else playThreat();
@@ -132,7 +185,7 @@ export function useAntiShield() {
       void stopScan.then((stop) => stop());
       for (const stop of stops) void stop.then((fn) => fn());
     };
-  }, [refresh, refreshStatus, refreshQuarantine]);
+  }, [refresh, refreshStatus, refreshQuarantine, refreshStories]);
 
   const pick = useCallback(async (kind: "folders" | "files") => {
     setError(null);
@@ -305,6 +358,10 @@ export function useAntiShield() {
     cleaning,
     rulesBusy,
     error,
+    stories,
+    story: stories.find((s) => s.id === storyId) ?? null,
+    openStory: (id: string) => setStoryId(id),
+    closeStory: () => setStoryId(null),
     refresh,
     refreshStatus,
     pick,

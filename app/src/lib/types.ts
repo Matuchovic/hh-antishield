@@ -281,6 +281,75 @@ export interface RuntimeInfo {
   programsSinceMs: number | null;
   /** Plný přístup k disku (macOS); jinde null. */
   fullDiskAccess: boolean | null;
+  /** Co ochrana zkontrolovala od spuštění (radar). */
+  activity: ActivityLog;
+}
+
+export type ActivityKind = "download" | "file" | "mail" | "program" | "startup";
+
+/** Dávka skutečně zkontrolovaných položek (událost „activity“). */
+export interface Activity {
+  atMs: number;
+  kind: ActivityKind;
+  count: number;
+  samples: { name: string; threat: boolean }[];
+}
+
+export interface RecentCheck {
+  atMs: number;
+  kind: ActivityKind | "scan";
+  name: string;
+  threat: boolean;
+}
+
+export interface ActivityLog {
+  sinceMs: number | null;
+  downloads: number;
+  files: number;
+  mail: number;
+  programs: number;
+  startup: number;
+  threats: number;
+  recent: RecentCheck[];
+}
+
+export type Channel = "web" | "email" | "airDrop" | "messages" | "externalDrive" | "unknown";
+
+export interface Provenance {
+  channel: Channel;
+  downloadUrl: string | null;
+  referrerUrl: string | null;
+  emailFrom: string | null;
+  savedBy: string | null;
+  arrivedAtMs: number | null;
+  createdAtMs: number | null;
+  modifiedAtMs: number | null;
+}
+
+export interface ProcessLink {
+  pid: number;
+  name: string;
+  path: string | null;
+  startedAtMs: number | null;
+}
+
+export type StorySource = "realtime" | "program" | "startup" | "scan";
+
+export type StoryOutcome =
+  | { type: "quarantined"; itemId: string; processTerminated: boolean }
+  | { type: "reported" }
+  | { type: "failed"; reason: string };
+
+/** Příběh útoku: od příchodu hrozby po zásah. */
+export interface Story {
+  id: string;
+  detectedAtMs: number;
+  source: StorySource;
+  finding: Finding;
+  provenance: Provenance;
+  chain: ProcessLink[];
+  outcome: StoryOutcome;
+  updatedAtMs: number;
 }
 
 export interface PrivacyGrant {

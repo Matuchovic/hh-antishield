@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::EngineError;
 use crate::types::{FindingOrigin, ScanRequest};
@@ -82,6 +82,48 @@ pub fn running_processes() -> Vec<ProcessInfo> {
         .collect();
     list.sort_by_key(|p| p.pid);
     list
+}
+
+/// Článek řetězu spuštění: proces a kdy začal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessLink {
+    pub pid: u32,
+    pub name: String,
+    pub path: Option<String>,
+    pub started_at_ms: Option<u64>,
+}
+
+/// Proces a ti, kdo ho spustili (rodiče), od něj ke kořeni; nejvýš `depth`
+/// článků. Proces, který už neběží, vrátí prázdný řetěz.
+pub fn process_chain(pid: u32, depth: usize) -> Vec<ProcessLink> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    let mut chain = Vec::new();
+    let mut current = Some(Pid::from_u32(pid));
+    while let Some(pid) = current
+        && chain.len() < depth
+    {
+        let Some(process) = system.process(pid) else {
+            break;
+        };
+        chain.push(ProcessLink {
+            pid: pid.as_u32(),
+            name: process.name().to_string_lossy().chars().take(200).collect(),
+            path: process.exe().map(|exe| exe.to_string_lossy().into_owned()),
+            started_at_ms: process.start_time().checked_mul(1000),
+        });
+        // Smyčka v rodičích (nemělo by nastat) řetěz ukončí.
+        current = process
+            .parent()
+            .filter(|parent| *parent != pid && !chain.iter().any(|l| l.pid == parent.as_u32()));
+    }
+    chain
 }
 
 /// Ukončí proces, jen pokud pořád běží ze stejného programu (ochrana proti
@@ -555,6 +597,19 @@ pub fn full_scan_request() -> ScanRequest {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_launch_chain_starts_with_the_process_itself() {
+        let me = std::process::id();
+        let chain = process_chain(me, 4);
+        assert_eq!(chain.first().map(|link| link.pid), Some(me));
+        assert!(
+            chain.len() >= 2,
+            "a test process always has a parent: {chain:?}"
+        );
+        assert!(chain.len() <= 4);
+        assert!(process_chain(u32::MAX - 7, 4).is_empty());
+    }
 
     #[test]
     fn command_lines_yield_programs() {

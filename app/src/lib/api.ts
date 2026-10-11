@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  Activity,
   AuditEvent,
   Detection,
   PostureCheck,
@@ -20,6 +21,7 @@ import type {
   ScanSummary,
   Selection,
   SelfTestReport,
+  Story,
   UpdateInfo,
   UpdateProgress,
 } from "./types";
@@ -45,6 +47,7 @@ export const api = {
   updateRulesNow: () => invoke<RuleUpdateOutcome>("update_rules_now"),
   runtimeInfo: () => invoke<RuntimeInfo>("runtime_info"),
   restartApp: () => invoke<void>("restart_app"),
+  threatStories: () => invoke<Story[]>("threat_stories"),
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
   pickWatchFolder: () => invoke<string | null>("pick_watch_folder"),
@@ -61,8 +64,13 @@ export function onUpdateProgress(handler: (progress: UpdateProgress) => void): P
 }
 
 /** Události backendu pro rozhraní. */
-export function onAppEvent<T>(name: "engine-ready" | "protection-event" | "rules-updated" | "quarantine-changed" | "navigate" | "scheduled-scan" | "access-changed", handler: (payload: T) => void): Promise<UnlistenFn> {
+export function onAppEvent<T>(name: "engine-ready" | "protection-event" | "rules-updated" | "quarantine-changed" | "navigate" | "scheduled-scan" | "access-changed" | "stories-changed", handler: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (message) => handler(message.payload));
+}
+
+/** Radar: dávky skutečně zkontrolovaných položek z hlídání. */
+export function onActivity(handler: (activity: Activity) => void): Promise<UnlistenFn> {
+  return listen<Activity>("activity", (message) => handler(message.payload));
 }
 
 export type { Detection };

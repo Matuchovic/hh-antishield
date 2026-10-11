@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-threat-stories"
+description = "Enables the threat_stories command without any pre-configured scope."
+commands.allow = ["threat_stories"]
+
+[[permission]]
+identifier = "deny-threat-stories"
+description = "Denies the threat_stories command without any pre-configured scope."
+commands.deny = ["threat_stories"]

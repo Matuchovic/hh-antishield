@@ -18,6 +18,10 @@ use tauri_plugin_notification::NotificationExt;
 
 use crate::settings::{PresetScan, Schedule, Settings};
 use crate::state::{AppState, CatchUp, Detection, DetectionAction, folder_readable, now_ms};
+use crate::story::{
+    Activity, ActivityKind, ActivitySample, MAX_SAMPLES, Story, StoryOutcome, StorySource,
+    display_name,
+};
 
 const RULES_BASE: &str = "https://github.com/Matuchovic/hh-antishield/releases/download/rules";
 const MAX_SIGNATURE_BYTES: usize = 4 * 1024;
@@ -41,6 +45,14 @@ pub struct EmitObserver {
 
 impl ScanObserver for EmitObserver {
     fn on_event(&self, event: ScanEvent) {
+        if let ScanEvent::FindingDetected { finding, .. } = &event {
+            record_story(
+                &self.app,
+                finding,
+                StorySource::Scan,
+                StoryOutcome::Reported,
+            );
+        }
         if let ScanEvent::Finished { summary, .. } = &event {
             if let Ok(mut last) = self.last_summary.lock() {
                 *last = Some(summary.clone());
@@ -359,8 +371,18 @@ fn auto_remediate(auto_quarantine: bool, finding: &Finding, source: Source) -> b
 /// Zásah podle nastavení, oznámení a záznam do přehledu zachycených hrozeb.
 fn record_detection(app: &AppHandle, engine: &Engine, finding: Finding, source: Source) {
     let state = app.state::<AppState>();
+    // Příběh útoku: původ a řetěz spuštění se čtou dřív, než se soubor
+    // izoluje a proces ukončí.
+    let story_source = match (source, &finding.origin) {
+        (Source::File, _) => StorySource::Realtime,
+        (_, Some(FindingOrigin::StartupItem { .. })) => StorySource::Startup,
+        _ => StorySource::Program,
+    };
+    let evidence = StoryEvidence::capture(&finding);
+    let mut process_terminated = false;
     let action = if auto_remediate(state.settings().auto_quarantine, &finding, source) {
         let report = engine.remediate(&finding);
+        process_terminated = report.process_terminated;
         match report.quarantined {
             Some(item) => DetectionAction::Quarantined { item_id: item.id },
             None => DetectionAction::Failed {
@@ -395,6 +417,17 @@ fn record_detection(app: &AppHandle, engine: &Engine, finding: Finding, source: 
         ),
     };
     notify(app, title, &body);
+    let outcome = match &action {
+        DetectionAction::Quarantined { item_id } => StoryOutcome::Quarantined {
+            item_id: item_id.clone(),
+            process_terminated,
+        },
+        DetectionAction::Detected => StoryOutcome::Reported,
+        DetectionAction::Failed { reason } => StoryOutcome::Failed {
+            reason: reason.clone(),
+        },
+    };
+    evidence.save(app, &finding, story_source, outcome);
     let detection = Detection {
         at_ms: now_ms(),
         finding,
@@ -404,20 +437,116 @@ fn record_detection(app: &AppHandle, engine: &Engine, finding: Finding, source: 
     state.add_detection(detection);
 }
 
+/// Co se o hrozbě dá zjistit jen před zásahem (původ, kdo ji spustil).
+struct StoryEvidence {
+    provenance: antishield_core::provenance::Provenance,
+    chain: Vec<system::ProcessLink>,
+}
+
+impl StoryEvidence {
+    fn capture(finding: &Finding) -> Self {
+        Self {
+            provenance: antishield_core::provenance::read(Path::new(&finding.path)),
+            chain: match &finding.origin {
+                Some(FindingOrigin::Process { pid, .. }) => system::process_chain(*pid, 6),
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    fn save(self, app: &AppHandle, finding: &Finding, source: StorySource, outcome: StoryOutcome) {
+        let state = app.state::<AppState>();
+        let at_ms = now_ms();
+        let story = Story {
+            id: uuid::Uuid::new_v4().to_string(),
+            detected_at_ms: at_ms,
+            source,
+            finding: finding.clone(),
+            provenance: self.provenance,
+            chain: self.chain,
+            outcome,
+            updated_at_ms: at_ms,
+        };
+        if let Ok(mut book) = state.stories.lock() {
+            book.add(story, &state.data_dir);
+        }
+        let _ = app.emit("stories-changed", ());
+    }
+}
+
+/// Příběh pro nález z kontroly (bez okamžitého zásahu).
+fn record_story(app: &AppHandle, finding: &Finding, source: StorySource, outcome: StoryOutcome) {
+    StoryEvidence::capture(finding).save(app, finding, source, outcome);
+}
+
+/// Radar: souhrn skutečně zkontrolovaných položek jednoho druhu. Hrozby
+/// jsou v ukázce vždy, pak ostatní názvy.
+fn report_activity(app: &AppHandle, kind: ActivityKind, items: &[(String, bool)]) {
+    if items.is_empty() {
+        return;
+    }
+    let samples: Vec<ActivitySample> = items
+        .iter()
+        .filter(|(_, threat)| *threat)
+        .chain(items.iter().filter(|(_, threat)| !*threat))
+        .take(MAX_SAMPLES)
+        .map(|(name, threat)| ActivitySample {
+            name: name.clone(),
+            threat: *threat,
+        })
+        .collect();
+    let activity = Activity {
+        at_ms: now_ms(),
+        kind,
+        count: u32::try_from(items.len()).unwrap_or(u32::MAX),
+        samples,
+    };
+    if let Ok(mut log) = app.state::<AppState>().activity.lock() {
+        log.record(&activity);
+    }
+    let _ = app.emit("activity", &activity);
+}
+
+/// Zkontrolované položky (druh, název, hrozba) rozdělí podle druhu pro radar.
+fn report_checked(app: &AppHandle, checked: &[(ActivityKind, String, bool)]) {
+    for kind in [
+        ActivityKind::Download,
+        ActivityKind::File,
+        ActivityKind::Mail,
+        ActivityKind::Program,
+        ActivityKind::Startup,
+    ] {
+        let items: Vec<(String, bool)> = checked
+            .iter()
+            .filter(|(k, ..)| *k == kind)
+            .map(|(_, name, threat)| (name.clone(), *threat))
+            .collect();
+        report_activity(app, kind, &items);
+    }
+}
+
 /// Zkontroluje programy (s původem) a nálezy předá k zásahu.
 fn inspect_programs(app: &AppHandle, engine: &Engine, programs: Vec<(PathBuf, FindingOrigin)>) {
     if programs.is_empty() {
         return;
     }
     let paths: Vec<PathBuf> = programs.iter().map(|(path, _)| path.clone()).collect();
-    for ((_, origin), (_, result)) in programs.into_iter().zip(engine.inspect_paths(&paths)) {
-        if let InspectResult::Scanned { findings, .. } = result
-            && let Some(mut finding) = findings.into_iter().next()
-        {
+    let mut checked = Vec::new();
+    for ((path, origin), (_, result)) in programs.into_iter().zip(engine.inspect_paths(&paths)) {
+        let InspectResult::Scanned { findings, .. } = result else {
+            continue;
+        };
+        let kind = match origin {
+            FindingOrigin::StartupItem { .. } => ActivityKind::Startup,
+            FindingOrigin::Process { .. } => ActivityKind::Program,
+        };
+        checked.push((kind, display_name(&path), !findings.is_empty()));
+        if let Some(mut finding) = findings.into_iter().next() {
             finding.origin = Some(origin);
             record_detection(app, engine, finding, Source::Program);
         }
     }
+    report_checked(app, &checked);
 }
 
 fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
@@ -445,6 +574,7 @@ fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
             ))
         })
         .collect();
+    let mut checked = Vec::new();
     for (path, result) in engine.inspect_paths(&files) {
         let findings = match result {
             InspectResult::Scanned { findings, .. } => findings,
@@ -458,11 +588,17 @@ fn on_new_files(app: &AppHandle, files: Vec<PathBuf>) {
             }
             InspectResult::Skipped(_) => continue,
         };
+        checked.push((
+            ActivityKind::for_path(&path),
+            display_name(&path),
+            !findings.is_empty(),
+        ));
         // Jeden zásah na soubor: první nález rozhoduje, zbytek je ve výsledcích.
         if let Some(finding) = findings.into_iter().next() {
             record_detection(app, &engine, finding, Source::File);
         }
     }
+    report_checked(app, &checked);
     inspect_programs(app, &engine, programs);
 }
 
