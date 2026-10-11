@@ -436,6 +436,58 @@ fn keygen(key_id: &str, out_dir: &std::path::Path) -> Result<ExitCode, Box<dyn s
     Ok(ExitCode::SUCCESS)
 }
 
+/// Klíč pro kontrolu nového podpisu se stejnými pravidly jako v aplikaci.
+/// Klíč se jménem zabudovaného klíče musí být přesně ten zabudovaný (jinak by
+/// aplikace podpis odmítla); neznámý klíč smí podepsat jen testovací sadu.
+#[cfg(feature = "signing")]
+fn signing_check_key(
+    key_id: &str,
+    public_key: [u8; 32],
+) -> Result<antishield_core::rules::TrustedKey, String> {
+    let builtin = builtin_trusted_keys()
+        .into_iter()
+        .find(|k| k.key_id == key_id);
+    if let Some(known) = &builtin
+        && known.public_key != public_key
+    {
+        return Err(format!(
+            "the key file does not match the built-in key {key_id}"
+        ));
+    }
+    Ok(antishield_core::rules::TrustedKey {
+        key_id: key_id.to_string(),
+        public_key,
+        test_only: builtin.is_none_or(|k| k.test_only),
+    })
+}
+
+#[cfg(all(test, feature = "signing"))]
+mod sign_tests {
+    use super::signing_check_key;
+    use antishield_core::rules::builtin_trusted_keys;
+
+    #[test]
+    fn production_key_signs_production_packs() {
+        let prod = builtin_trusted_keys()
+            .into_iter()
+            .find(|k| !k.test_only)
+            .expect("production key is built in");
+        let key = signing_check_key(&prod.key_id, prod.public_key).expect("matching key");
+        assert!(!key.test_only);
+    }
+
+    #[test]
+    fn wrong_or_unknown_keys_are_restricted() {
+        let prod = builtin_trusted_keys()
+            .into_iter()
+            .find(|k| !k.test_only)
+            .expect("production key is built in");
+        assert!(signing_check_key(&prod.key_id, [7; 32]).is_err());
+        let unknown = signing_check_key("someone-else", [7; 32]).expect("unknown key");
+        assert!(unknown.test_only);
+    }
+}
+
 #[cfg(feature = "signing")]
 fn sign(
     pack: &std::path::Path,
@@ -443,19 +495,15 @@ fn sign(
     key_id: &str,
     out: &std::path::Path,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
-    use antishield_core::rules::{TrustedKey, signing};
+    use antishield_core::rules::signing;
 
     let seed: [u8; 32] = hex::decode(std::fs::read_to_string(key)?.trim())?
         .try_into()
         .map_err(|_| "the key file must contain 32 bytes in hex")?;
     let pack_bytes = std::fs::read(pack)?;
+    let check_key = signing_check_key(key_id, signing::public_key(&seed))?;
     let signature = signing::sign_pack(&pack_bytes, &seed, key_id);
-    // Kontrola: nová sada musí projít ověřením odvozeným veřejným klíčem.
-    let check_key = TrustedKey {
-        key_id: key_id.to_string(),
-        public_key: signing::public_key(&seed),
-        test_only: true,
-    };
+    // Kontrola: nová sada musí projít stejným ověřením jako v aplikaci.
     RulePack::load(&pack_bytes, signature.as_bytes(), &[check_key], now_unix())
         .map_err(|e| describe(&e))?;
     std::fs::write(out, signature)?;
