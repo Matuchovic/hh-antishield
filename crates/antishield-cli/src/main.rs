@@ -17,6 +17,8 @@ use antishield_core::{
 };
 use clap::{Parser, Subcommand};
 
+mod forge;
+
 #[derive(Parser)]
 #[command(
     name = "antishield",
@@ -76,6 +78,30 @@ enum Command {
 enum RulesCommand {
     /// Ověří podpis a obsah sady pravidel zabudovanými klíči.
     Verify { pack: PathBuf, signature: PathBuf },
+    /// Sestaví produkční sadu z balíčku YARA Forge (jen licence vhodné ke komerčnímu použití).
+    Build {
+        /// Základní sada (klasická pravidla, EICAR).
+        #[arg(long)]
+        base: PathBuf,
+        /// Neškodné pravidlo pro self-test YARA.
+        #[arg(long)]
+        selftest: PathBuf,
+        /// Balíček YARA Forge (yara-rules-core.yar).
+        #[arg(long)]
+        forge: PathBuf,
+        #[arg(long)]
+        sequence: u64,
+        #[arg(long)]
+        version: String,
+        /// Platnost sady ve dnech.
+        #[arg(long, default_value_t = 45)]
+        valid_days: i64,
+        /// Selhat, když sada obsahuje méně pravidel YARA.
+        #[arg(long, default_value_t = 1)]
+        min_yara_rules: usize,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Vygeneruje nový pár klíčů Ed25519 (soukromý klíč nikdy necommitovat).
     #[cfg(feature = "signing")]
     Keygen {
@@ -296,6 +322,25 @@ fn rules(command: &RulesCommand) -> Result<ExitCode, Box<dyn std::error::Error>>
             println!("{}", serde_json::to_string_pretty(pack.info())?);
             Ok(ExitCode::SUCCESS)
         }
+        RulesCommand::Build {
+            base,
+            selftest,
+            forge,
+            sequence,
+            version,
+            valid_days,
+            min_yara_rules,
+            out,
+        } => build_rules(
+            base,
+            selftest,
+            forge,
+            *sequence,
+            version,
+            *valid_days,
+            *min_yara_rules,
+            out,
+        ),
         #[cfg(feature = "signing")]
         RulesCommand::Keygen { key_id, out_dir } => keygen(key_id, out_dir),
         #[cfg(feature = "signing")]
@@ -306,6 +351,53 @@ fn rules(command: &RulesCommand) -> Result<ExitCode, Box<dyn std::error::Error>>
             out,
         } => sign(pack, key, key_id, out),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_rules(
+    base: &std::path::Path,
+    selftest: &std::path::Path,
+    forge_file: &std::path::Path,
+    sequence: u64,
+    version: &str,
+    valid_days: i64,
+    min_yara_rules: usize,
+    out: &std::path::Path,
+) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let base: serde_json::Value = serde_json::from_slice(&std::fs::read(base)?)?;
+    let selftest = std::fs::read_to_string(selftest)?;
+    let forge_text = std::fs::read_to_string(forge_file)?;
+    let (pack, stats) = forge::build_pack(
+        &base,
+        &selftest,
+        &forge_text,
+        sequence,
+        version,
+        now_unix(),
+        valid_days,
+    )?;
+    let total: usize = stats.included.iter().map(|(_, _, n)| n).sum();
+    println!("Zdroje v sadě ({}):", stats.included.len());
+    for (name, license, count) in &stats.included {
+        println!("  {name}: {count} pravidel, licence {license}");
+    }
+    println!(
+        "Vynecháno kvůli licenci ({}):",
+        stats.excluded_license.len()
+    );
+    for (name, url) in &stats.excluded_license {
+        println!("  {name} ({url})");
+    }
+    println!("Pravidla, která YARA-X nepřeložil: {}", stats.failed_rules);
+    println!("Pravidel YARA celkem: {total}");
+    if total < min_yara_rules {
+        return Err(format!("too few YARA rules: {total} < {min_yara_rules}").into());
+    }
+    let mut text = serde_json::to_string_pretty(&pack)?;
+    text.push('\n');
+    std::fs::write(out, text)?;
+    println!("Sada zapsána: {}", out.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 fn now_unix() -> i64 {

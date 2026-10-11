@@ -141,6 +141,7 @@ dependencies = [
  "hex",
  "serde_json",
  "tempfile",
+ "yara-x",
 ]
 
 [[package]]
