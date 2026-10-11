@@ -20,6 +20,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let engine = Engine::new(EngineConfig::new(data_dir));
@@ -35,6 +36,8 @@ fn main() {
             commands::cancel_scan,
             commands::recent_events,
             commands::last_summary,
+            commands::check_update,
+            commands::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("H&H AntiShield se nepodařilo spustit");

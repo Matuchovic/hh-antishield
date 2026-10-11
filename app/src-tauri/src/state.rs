@@ -18,6 +18,7 @@ pub struct AppState {
     selections: Mutex<VecDeque<(String, Vec<PathBuf>)>>,
     current_scan: Mutex<Option<ScanHandle>>,
     last_summary: Arc<Mutex<Option<ScanSummary>>>,
+    pending_update: Mutex<Option<tauri_plugin_updater::Update>>,
 }
 
 impl AppState {
@@ -32,6 +33,7 @@ impl AppState {
             selections: Mutex::new(VecDeque::new()),
             current_scan: Mutex::new(None),
             last_summary: Arc::new(Mutex::new(None)),
+            pending_update: Mutex::new(None),
         }
     }
 
@@ -105,6 +107,19 @@ impl AppState {
 
     pub fn last_summary(&self) -> Option<ScanSummary> {
         self.last_summary.lock().ok().and_then(|last| last.clone())
+    }
+
+    pub fn set_pending_update(&self, update: Option<tauri_plugin_updater::Update>) {
+        if let Ok(mut pending) = self.pending_update.lock() {
+            *pending = update;
+        }
+    }
+
+    pub fn take_pending_update(&self) -> Option<tauri_plugin_updater::Update> {
+        self.pending_update
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.take())
     }
 }
 

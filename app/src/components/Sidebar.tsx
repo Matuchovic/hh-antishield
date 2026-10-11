@@ -87,7 +87,7 @@ export function Sidebar({
           <span className="dot" aria-hidden="true" />
           {status?.text ?? "Načítám stav…"}
         </p>
-        <p>Verze 0.1.0{info ? `, ${platformName(info.platform)}` : ""}</p>
+        <p>Verze {__APP_VERSION__}{info ? `, ${platformName(info.platform)}` : ""}</p>
         <p>
           {info
             ? `Pravidla ${info.rulePack.version}${info.rulePack.testPack ? " (testovací)" : ""}`

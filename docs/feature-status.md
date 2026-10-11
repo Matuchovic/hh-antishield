@@ -26,7 +26,8 @@ připravená“, nikoli „Chráněno“.
 | Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené (chyba čtení) |
 | Archivy (ZIP, DMG, …) | rozpoznají se a započítají jako „nerozbalené“, obsah se nekontroluje |
 | macOS a Windows specifika (O_NOFOLLOW_ANY, dataless soubory, reparse points) | testy prošly v CI na macOS i Windows; chybí ruční test na skutečném zařízení |
-| App Sandbox na macOS | entitlements nastavené, chování ověřit na skutečném Macu |
+| Aktualizace aplikace (banner, podpis Ed25519, GitHub Releases) | hotovo od 0.1.1; celý průběh se ověří až vydáním 0.1.2 |
+| App Sandbox na macOS | vypnutý kvůli aktualizacím (sandboxovaná aplikace nesmí přepsat sama sebe) |
 | Distribuce | DMG podepsaný ad-hoc, Windows nepodepsaný; uživatel musí jednou povolit spuštění |
 
 ## Chybí (plánováno)

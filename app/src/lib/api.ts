@@ -11,6 +11,8 @@ import type {
   ScanSummary,
   Selection,
   SelfTestReport,
+  UpdateInfo,
+  UpdateProgress,
 } from "./types";
 
 export const api = {
@@ -23,10 +25,16 @@ export const api = {
   cancelScan: () => invoke<void>("cancel_scan"),
   recentEvents: (limit: number) => invoke<AuditEvent[]>("recent_events", { limit }),
   lastSummary: () => invoke<ScanSummary | null>("last_summary"),
+  checkUpdate: () => invoke<UpdateInfo | null>("check_update"),
+  installUpdate: () => invoke<void>("install_update"),
 };
 
 export function onScanEvent(handler: (event: ScanEvent) => void): Promise<UnlistenFn> {
   return listen<ScanEvent>("scan-event", (message) => handler(message.payload));
+}
+
+export function onUpdateProgress(handler: (progress: UpdateProgress) => void): Promise<UnlistenFn> {
+  return listen<UpdateProgress>("update-progress", (message) => handler(message.payload));
 }
 
 export function asError(error: unknown): ErrorDto {

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Sidebar, type Screen } from "./components/Sidebar";
 import { describeError } from "./lib/format";
 import { useAntiShield } from "./lib/useAntiShield";
+import { useUpdater } from "./lib/useUpdater";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { About } from "./screens/About";
 import { Events } from "./screens/Events";
 import { Overview } from "./screens/Overview";
@@ -11,6 +13,7 @@ import { Scan } from "./screens/Scan";
 
 export function App() {
   const app = useAntiShield();
+  const updater = useUpdater();
   const [screen, setScreen] = useState<Screen>("overview");
 
   // Reflektor pod kurzorem na panelech (jen CSS proměnné, žádný stav).
@@ -37,7 +40,7 @@ export function App() {
       case "events":
         return <Events app={app} />;
       case "about":
-        return <About app={app} />;
+        return <About app={app} updater={updater} />;
       case "realtime":
       case "quarantine":
       case "systemcare":
@@ -56,6 +59,7 @@ export function App() {
       />
       {app.scan.running ? <div className="scan-line" aria-hidden="true" /> : null}
       <main className="content">
+        <UpdateBanner updater={updater} />
         {app.error ? (
           <div className="error-bar" role="alert">
             <span>{describeError(app.error)}</span>

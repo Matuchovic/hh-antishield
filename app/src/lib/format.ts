@@ -181,6 +181,9 @@ const ERRORS: Record<string, string> = {
   rule_pack_too_large: "Sada pravidel je příliš velká. Engine ji odmítl.",
   scan_already_running: "Kontrola už běží. Počkejte na její konec nebo ji zrušte.",
   audit: "Auditní log není dostupný.",
+  update: "Aktualizaci se nepodařilo stáhnout nebo ověřit. Zkuste to později.",
+  scan_running: "Počkejte na konec kontroly, pak aktualizujte.",
+  no_update: "Žádná aktualizace není připravená. Zkontrolujte aktualizace znovu.",
 };
 
 export function describeError(error: ErrorDto): string {

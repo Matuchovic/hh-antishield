@@ -52,6 +52,7 @@ const PATHS = {
   ),
   chevron: <path d="m9 6 6 6-6 6" />,
   check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
+  download: <path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19h14" />,
   engine: <path d="M7 7h10v10H7zm3-4v4m4-4v4m-4 10v4m4-4v4M3 10h4m-4 4h4m10-4h4m-4 4h4" />,
   key: (
     <>

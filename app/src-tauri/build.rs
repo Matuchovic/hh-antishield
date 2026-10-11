@@ -10,6 +10,8 @@ fn main() {
         "cancel_scan",
         "recent_events",
         "last_summary",
+        "check_update",
+        "install_update",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");

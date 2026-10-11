@@ -1,5 +1,6 @@
-import { formatDateTime } from "../lib/format";
+import { describeError, formatDateTime } from "../lib/format";
 import type { AntiShield } from "../lib/useAntiShield";
+import type { Updater } from "../lib/useUpdater";
 
 const NOTICES: { name: string; license: string }[] = [
   { name: "Tauri", license: "MIT nebo Apache-2.0" },
@@ -11,7 +12,14 @@ const NOTICES: { name: string; license: string }[] = [
   { name: "Písmo Barlow (Jeremy Tribby)", license: "SIL Open Font License 1.1" },
 ];
 
-export function About({ app }: { app: AntiShield }) {
+const UPDATE_TEXT = {
+  idle: "Aplikace kontroluje aktualizace po spuštění a pak každých 6 hodin.",
+  checking: "Kontroluji…",
+  upToDate: "Máte nejnovější verzi.",
+  installing: "Instaluji aktualizaci…",
+} as const;
+
+export function About({ app, updater }: { app: AntiShield; updater: Updater }) {
   const { info, selfTest } = app;
   return (
     <div className="screen">
@@ -23,7 +31,7 @@ export function About({ app }: { app: AntiShield }) {
       <dl className="facts">
         <div>
           <dt>Aplikace</dt>
-          <dd>0.1.0</dd>
+          <dd>{__APP_VERSION__}</dd>
         </div>
         <div>
           <dt>Engine</dt>
@@ -42,6 +50,28 @@ export function About({ app }: { app: AntiShield }) {
           <dd>{info ? `Ed25519, klíč ${info.rulePack.signingKeyId}` : "neověřen"}</dd>
         </div>
       </dl>
+
+      <section className="panel" aria-labelledby="update-title">
+        <div className="panel-head">
+          <h2 id="update-title">Aktualizace</h2>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={updater.status === "checking" || updater.status === "installing"}
+            onClick={() => void updater.check()}
+          >
+            Zkontrolovat aktualizace
+          </button>
+        </div>
+        <p className={updater.status === "error" ? "tone-text-alert" : "muted"}>
+          {updater.status === "available" && updater.info
+            ? `Je k dispozici verze ${updater.info.version}, nainstalujete ji z banneru nahoře.`
+            : updater.status === "error" && updater.error
+              ? describeError(updater.error)
+              : UPDATE_TEXT[updater.status === "available" || updater.status === "error" ? "idle" : updater.status]}
+        </p>
+        <p className="muted">Aktualizace jsou podepsané klíčem H&amp;H; aplikace nepodepsanou aktualizaci odmítne.</p>
+      </section>
 
       <section className="panel" aria-labelledby="selftest-title">
         <div className="panel-head">

@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use antishield_core::error::ErrorDto;
 use antishield_core::status::ProtectionSummary;
@@ -12,6 +13,7 @@ use antishield_core::{
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::state::AppState;
 
@@ -142,4 +144,79 @@ pub fn recent_events(state: State<'_, AppState>, limit: u32) -> Result<Vec<Audit
 #[tauri::command]
 pub fn last_summary(state: State<'_, AppState>) -> Option<ScanSummary> {
     state.last_summary()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+fn update_error(err: impl std::fmt::Display) -> ErrorDto {
+    app_error("update", &err.to_string())
+}
+
+/// Zjistí, jestli je na serveru novější verze. Adresu a veřejný klíč určuje
+/// tauri.conf.json, rozhraní je změnit nemůže.
+#[tauri::command]
+pub async fn check_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<UpdateInfo>, ErrorDto> {
+    let update = app
+        .updater()
+        .map_err(update_error)?
+        .check()
+        .await
+        .map_err(update_error)?;
+    let info = update.as_ref().map(|u| UpdateInfo {
+        version: u.version.clone(),
+        current_version: u.current_version.clone(),
+        notes: u.body.clone(),
+    });
+    state.set_pending_update(update);
+    Ok(info)
+}
+
+/// Stáhne aktualizaci, ověří její podpis (Ed25519) a nainstaluje ji.
+/// Nepodepsanou nebo poškozenou aktualizaci updater odmítne. Pak restart.
+#[tauri::command]
+pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), ErrorDto> {
+    if state.engine().is_ok_and(|engine| engine.is_scan_running()) {
+        return Err(app_error(
+            "scan_running",
+            "Počkejte na konec kontroly, pak aktualizujte.",
+        ));
+    }
+    let update = state
+        .take_pending_update()
+        .ok_or_else(|| app_error("no_update", "Žádná aktualizace není připravená."))?;
+    let progress_app = app.clone();
+    let mut downloaded: u64 = 0;
+    let mut last_emit: Option<Instant> = None;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let due = last_emit.is_none_or(|t| t.elapsed() >= Duration::from_millis(100));
+                if due || Some(downloaded) == total {
+                    last_emit = Some(Instant::now());
+                    let _ =
+                        progress_app.emit("update-progress", UpdateProgress { downloaded, total });
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(update_error)?;
+    app.restart();
 }

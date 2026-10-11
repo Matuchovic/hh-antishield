@@ -24,7 +24,9 @@ DMG ověřen na skutečném Macu: okno, sandbox a self-test fungují.
   otevřít“), Windows NSIS pro aktuálního uživatele (nepodepsaný).
 - Samostatný projekt: žádný vliv na hhsecurity a hhcloud.
 - Bundle ID `cz.hh.antishield` (dočasné), macOS min. 12.0.
-- Entitlement `network.client` jen kvůli WKWebView v sandboxu; ověřit na Macu.
+- Aktualizace přes banner (tauri-plugin-updater, podpis Ed25519, GitHub Releases,
+  `latest.json`); App Sandbox kvůli tomu vypnutý (rozhodl uživatel 2026-10-11).
+  Soukromý klíč updateru jen v GitHub Secrets `TAURI_SIGNING_*` + záloha u uživatele.
 
 ## Testy (2026-10-11)
 CI: 48 testů jádra na Linuxu, macOS a Windows, clippy `-D warnings`, rustfmt,

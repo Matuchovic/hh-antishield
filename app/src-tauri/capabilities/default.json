@@ -13,6 +13,8 @@
     "allow-start-scan",
     "allow-cancel-scan",
     "allow-recent-events",
-    "allow-last-summary"
+    "allow-last-summary",
+    "allow-check-update",
+    "allow-install-update"
   ]
 }

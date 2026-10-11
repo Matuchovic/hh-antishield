@@ -168,3 +168,14 @@ export interface ErrorDto {
   code: string;
   message: string;
 }
+
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+}

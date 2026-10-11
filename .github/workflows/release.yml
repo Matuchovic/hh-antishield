@@ -1,7 +1,9 @@
 name: Release
 
-# Sestaví instalační balíčky. Spouští se ručně nebo značkou v*.
-# v0.1: macOS je podepsaný ad-hoc (bez Apple Developer ID), Windows nepodepsaný.
+# Sestaví instalační balíčky a podepsané aktualizace. Značka v* navíc vytvoří
+# GitHub Release s latest.json, odkud si aplikace stahuje aktualizace.
+# macOS: podpis ad-hoc (bez Apple Developer ID), Windows: nepodepsaný instalátor.
+# Aktualizace podepisuje klíč updateru z GitHub Secrets (TAURI_SIGNING_*).
 on:
   workflow_dispatch:
   push:
@@ -12,6 +14,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
 jobs:
   macos:
@@ -31,23 +35,25 @@ jobs:
       - name: Sestavení
         run: npm run tauri -- build --target universal-apple-darwin --bundles app,dmg
         working-directory: app
-      - name: Kontrola podpisu a entitlements
+      - name: Kontrola podpisu a self-test
         run: |
           APP="target/universal-apple-darwin/release/bundle/macos/H&H AntiShield.app"
           codesign --verify --deep --strict --verbose=2 "$APP"
-          codesign -d --entitlements - "$APP"
           lipo -archs "$APP/Contents/MacOS/antishield-app"
           "target/universal-apple-darwin/release/antishield-app" --self-test
-      - name: Kontrolní součty
+      - name: Soubory k vydání
         run: |
-          cd target/universal-apple-darwin/release/bundle/dmg
-          shasum -a 256 *.dmg | tee SHA256SUMS-macos.txt
+          VER=$(node -p "require('./app/package.json').version")
+          B=target/universal-apple-darwin/release/bundle
+          mkdir -p out
+          cp "$B"/dmg/*.dmg "out/hh-antishield_${VER}_universal.dmg"
+          cp "$B"/macos/*.app.tar.gz "out/hh-antishield_${VER}_universal.app.tar.gz"
+          cp "$B"/macos/*.app.tar.gz.sig "out/hh-antishield_${VER}_universal.app.tar.gz.sig"
+          cd out && shasum -a 256 *.dmg *.tar.gz | tee SHA256SUMS-macos.txt
       - uses: actions/upload-artifact@v4
         with:
           name: hh-antishield-macos
-          path: |
-            target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            target/universal-apple-darwin/release/bundle/dmg/SHA256SUMS-macos.txt
+          path: out/*
           if-no-files-found: error
 
   windows:
@@ -71,16 +77,55 @@ jobs:
         run: |
           $p = Start-Process -FilePath "target/release/antishield-app.exe" -ArgumentList "--self-test" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "self-test selhal: $($p.ExitCode)" }
-      - name: Kontrolní součty
-        shell: pwsh
+      - name: Soubory k vydání
+        shell: bash
         run: |
-          Get-ChildItem target/release/bundle/nsis/*.exe | ForEach-Object {
-            "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
-          } | Tee-Object -FilePath target/release/bundle/nsis/SHA256SUMS-windows.txt
+          VER=$(node -p "require('./app/package.json').version")
+          B=target/release/bundle/nsis
+          mkdir -p out
+          cp "$B"/*-setup.exe "out/hh-antishield_${VER}_x64-setup.exe"
+          cp "$B"/*-setup.exe.sig "out/hh-antishield_${VER}_x64-setup.exe.sig"
+          cd out && sha256sum *.exe | tee SHA256SUMS-windows.txt
       - uses: actions/upload-artifact@v4
         with:
           name: hh-antishield-windows
-          path: |
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/nsis/SHA256SUMS-windows.txt
+          path: out/*
           if-no-files-found: error
+
+  publish:
+    name: GitHub Release + latest.json
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Ověřit verzi a sestavit latest.json
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          VER="${TAG#v}"
+          test "$VER" = "$(node -p "require('./app/package.json').version")"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          NOTES=$(git tag -l --format='%(contents)' "$TAG" | sed '/^-----BEGIN/,$d')
+          [ -n "$NOTES" ] || NOTES="H&H AntiShield $VER"
+          printf '%s\n' "$NOTES" > notes.md
+          BASE="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG"
+          MAC="hh-antishield_${VER}_universal.app.tar.gz"
+          WIN="hh-antishield_${VER}_x64-setup.exe"
+          jq -n --arg v "$VER" --arg notes "$NOTES" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg mac "$BASE/$MAC" --arg macsig "$(cat "out/$MAC.sig")" \
+            --arg win "$BASE/$WIN" --arg winsig "$(cat "out/$WIN.sig")" \
+            '{version: $v, notes: $notes, pub_date: $date, platforms: {
+               "darwin-aarch64": {signature: $macsig, url: $mac},
+               "darwin-x86_64": {signature: $macsig, url: $mac},
+               "windows-x86_64": {signature: $winsig, url: $win}}}' > out/latest.json
+          cat out/latest.json
+      - name: Vydání
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" out/* --title "H&H AntiShield $GITHUB_REF_NAME" --notes-file notes.md
