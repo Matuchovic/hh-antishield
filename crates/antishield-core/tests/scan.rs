@@ -216,7 +216,11 @@ fn unusual_names_and_deep_paths_are_reported_exactly() {
     write(&root.join("nový\nřádek.bin"), &eicar());
     // macOS cestu delší než PATH_MAX (1024 B) neumí vytvořit ani otevřít;
     // jinde ověřujeme i cesty delší než 1024 B.
-    let limit = if cfg!(target_os = "macos") { 1000 } else { 1500 };
+    let limit = if cfg!(target_os = "macos") {
+        1000
+    } else {
+        1500
+    };
     let mut deep = root.clone();
     let mut i = 0;
     while deep.as_os_str().len() + 40 < limit {

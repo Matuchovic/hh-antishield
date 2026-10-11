@@ -38,6 +38,7 @@ jobs:
         shell: bash
         # Logy nejsou vždy dostupné; selhání posíláme i jako anotace.
         run: |
+          [ -f test-output.txt ] || exit 0
           awk '/^---- .* stdout ----$/{p=6} p>0{printf "%s%%0A", $0; p--; if(p==0) print ""}' test-output.txt \
             | head -10 | while IFS= read -r l; do echo "::error::$l"; done
       - name: Self-test CLI
