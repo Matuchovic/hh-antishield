@@ -214,12 +214,19 @@ fn unusual_names_and_deep_paths_are_reported_exactly() {
     }
     #[cfg(unix)]
     write(&root.join("nový\nřádek.bin"), &eicar());
+    // macOS cestu delší než PATH_MAX (1024 B) neumí vytvořit ani otevřít;
+    // jinde ověřujeme i cesty delší než 1024 B.
+    let limit = if cfg!(target_os = "macos") { 1000 } else { 1500 };
     let mut deep = root.clone();
-    for i in 0..60 {
+    let mut i = 0;
+    while deep.as_os_str().len() + 40 < limit {
         deep.push(format!("slozka-{i:02}-s-dlouhym-nazvem"));
+        i += 1;
     }
     write(&deep.join("hluboko.bin"), &eicar());
-    assert!(deep.as_os_str().len() > 1024);
+    if !cfg!(target_os = "macos") {
+        assert!(deep.as_os_str().len() > 1024);
+    }
 
     let engine = engine(&tmp.path().join("state"));
     let (_, summary) = scan(&engine, request(&root));

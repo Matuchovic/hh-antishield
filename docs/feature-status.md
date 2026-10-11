@@ -23,6 +23,7 @@ připravená“, nikoli „Chráněno“.
 
 | Funkce | Co chybí |
 | --- | --- |
+| Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené (chyba čtení) |
 | Archivy (ZIP, DMG, …) | rozpoznají se a započítají jako „nerozbalené“, obsah se nekontroluje |
 | macOS a Windows specifika (O_NOFOLLOW_ANY, dataless soubory, reparse points) | napsáno, ověří až CI na macOS/Windows a ruční test na Macu |
 | App Sandbox na macOS | entitlements nastavené, chování ověřit na skutečném Macu |

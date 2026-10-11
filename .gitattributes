@@ -1,0 +1,2 @@
+# Podepsané soubory pravidel musí zůstat bajtově shodné: bez převodu konců řádků.
+rules/** -text
