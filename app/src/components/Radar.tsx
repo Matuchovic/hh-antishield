@@ -73,6 +73,8 @@ export function RadarCanvas({
     let frame = 0;
     let running = false;
     let skip = false;
+    // Jednorázová úvodní vlna od jádra k okraji (start radaru).
+    const bootAt = performance.now();
 
     const resize = () => {
       size = canvas.clientWidth;
@@ -234,6 +236,17 @@ export function RadarCanvas({
         }
       }
 
+      const boot = now - bootAt;
+      if (!still && boot < 1500) {
+        const k = ease(boot / 1500);
+        ctx.globalAlpha = (1 - k) * 0.7;
+        ctx.strokeStyle = "rgba(160, 215, 255, 1)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(c, c, coreR + (R - coreR) * k, 0, TAU);
+        ctx.stroke();
+      }
+
       // Vlny z jádra po každé zkontrolované položce.
       for (let i = waves.length - 1; i >= 0; i--) {
         const age = now - (waves[i] ?? 0);
@@ -259,7 +272,7 @@ export function RadarCanvas({
     const loop = (now: number) => {
       frame = requestAnimationFrame(loop);
       // V nečinnosti stačí poloviční snímková frekvence.
-      const idle = !blips.length && !waves.length && !scanningRef.current;
+      const idle = !blips.length && !waves.length && !scanningRef.current && now - bootAt > 1500;
       skip = idle && !skip;
       if (!skip) draw(now);
     };

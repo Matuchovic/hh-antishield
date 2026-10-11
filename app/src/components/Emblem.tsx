@@ -99,7 +99,23 @@ function useEmblemMotion(ref: RefObject<HTMLDivElement | null>, still: boolean) 
       el.style.setProperty("--px", "0");
       el.style.setProperty("--py", "0");
     };
+    // Vrstva, která kontrolu provedla, krátce zazáří.
+    const arcFor: Record<string, string> = {
+      download: "a3",
+      file: "a3",
+      program: "a3",
+      startup: "a3",
+      mail: "a5",
+      scan: "a2",
+    };
+    const pingTimers = new Map<Element, number>();
     const stopPulses = onPulse((pulse) => {
+      const arc = el.querySelector(`.layer-arc.tone-good.${arcFor[pulse.kind] ?? "a0"}`);
+      if (arc) {
+        arc.classList.add("is-ping");
+        window.clearTimeout(pingTimers.get(arc));
+        pingTimers.set(arc, window.setTimeout(() => arc.classList.remove("is-ping"), 450));
+      }
       if (!pulse.threat) return;
       el.classList.remove("is-hit");
       // Nové spuštění animace zásahu.
@@ -113,6 +129,7 @@ function useEmblemMotion(ref: RefObject<HTMLDivElement | null>, still: boolean) 
     return () => {
       cancelAnimationFrame(frame);
       window.clearTimeout(hitTimer);
+      for (const timer of pingTimers.values()) window.clearTimeout(timer);
       stopPulses();
       hero.removeEventListener("pointermove", onMove);
       hero.removeEventListener("pointerleave", onLeave);

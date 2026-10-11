@@ -817,6 +817,7 @@ h3 {
   fill: none;
   stroke-width: 6;
   stroke-linecap: round;
+  transition: stroke 0.3s;
 }
 
 .layer-arc.tone-good {
@@ -824,6 +825,10 @@ h3 {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
   animation: draw 1.1s var(--ease-out) forwards;
+}
+
+.layer-arc.tone-good.is-ping {
+  stroke: #d6ecff;
 }
 
 .layer-arc.tone-caution {
@@ -2344,6 +2349,12 @@ details summary {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.finding-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
 }
 
 .finding-rule-block {

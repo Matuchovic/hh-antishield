@@ -5,7 +5,7 @@ members = ["crates/antishield-core", "crates/antishield-cli", "app/src-tauri"]
 default-members = ["crates/antishield-core", "crates/antishield-cli"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.95"
 license = "LicenseRef-HH-Proprietary"
