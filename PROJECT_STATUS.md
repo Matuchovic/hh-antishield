@@ -221,6 +221,11 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   s potvrzením uživatele. Do té doby firemní správa nefunguje.
 - Tajnou proměnnou `ANTISHIELD_FLEET_ACTIVATION` (živý test v CI) z cloudu
   nastavit nejde; nastaví uživatel.
+- Poradce zabezpečení Supabase u schránky hlásí „RLS bez politik“ (tabulky
+  jsou záměrně bez přístupu) a „SECURITY DEFINER volatelná rolí anon“
+  (záměr: funkce jsou API schránky a samy ověřují tokeny).
+- Aktivační kód pro správce je vydaný (jednorázový, platí do 11. 11. 2026,
+  předaný uživateli v chatu; v repozitáři není).
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 
@@ -231,7 +236,7 @@ Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pond
 
 ## Další krok
 Uživatel potvrdí zbytek schránky (nebo spustí `relay/migrations/0001…sql`
-v SQL editoru Supabase) → živý test schránky v CI → aktivační kód pro
-správce → PR a Release 0.7.0 → na Macu správce: založit firmu, pozvat Mac,
+v SQL editoru Supabase) → přidat do CI krok `live_relay_contract` a ověřit
+→ PR #11 z konceptu, sloučit, Release 0.7.0 → na Macu správce: založit firmu, pozvat Mac,
 na firemním Macu připojit, poslat úklid a kontrolu, souhlas s instalátory,
 odpojení.
