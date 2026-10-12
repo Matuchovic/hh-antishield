@@ -138,6 +138,8 @@ pub struct AppState {
     pub activity: Mutex<ActivityLog>,
     /// Čištění a zrychlení: poslední sken a měření.
     pub care: crate::care::CareState,
+    /// Firemní správa (správce i spravovaný Mac).
+    pub fleet: crate::fleet::FleetRuntime,
 }
 
 /// Kontrola souborů, které přibyly, když ochrana neběžela.
@@ -159,6 +161,7 @@ impl AppState {
         let settings = Settings::load(&data_dir.join("settings.json"));
         let restored_summary = load_summary(&data_dir.join(LAST_SUMMARY_FILE));
         let stories = StoryBook::load(&data_dir);
+        let fleet = crate::fleet::FleetRuntime::load(&data_dir);
         Self {
             data_dir,
             engine: OnceLock::new(),
@@ -182,6 +185,7 @@ impl AppState {
             stories: Mutex::new(stories),
             activity: Mutex::new(ActivityLog::default()),
             care: crate::care::CareState::default(),
+            fleet,
         }
     }
 

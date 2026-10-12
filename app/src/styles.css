@@ -2040,6 +2040,11 @@ h3 {
   color: var(--alert);
 }
 
+.notice.tone-caution {
+  border: 1px solid rgba(242, 184, 75, 0.35);
+  color: #f8d896;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

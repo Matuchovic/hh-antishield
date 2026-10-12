@@ -159,16 +159,17 @@ function JoinDialog({
 }
 
 function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [activation, setActivation] = useState("");
   const [fleetName, setFleetName] = useState("");
   const [adminName, setAdminName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const ready = fleetName.trim() && adminName.trim();
+  const ready = activation.trim() && fleetName.trim() && adminName.trim();
   const create = async () => {
     setBusy(true);
     setError(null);
     try {
-      await api.fleetCreate(fleetName.trim(), adminName.trim());
+      await api.fleetCreate(activation.trim(), fleetName.trim(), adminName.trim());
       onCreated();
     } catch (e) {
       setError(describeError(asError(e)));
@@ -187,6 +188,17 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
           tento Mac nikdy neopustí.
         </p>
       </header>
+      <label className="field">
+        <span>Aktivační kód (jednorázový, od provozovatele schránky)</span>
+        <input
+          type="text"
+          className="code-input"
+          value={activation}
+          placeholder="HHA1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
+          spellCheck={false}
+          onChange={(e) => setActivation(e.target.value.toUpperCase())}
+        />
+      </label>
       <label className="field">
         <span>Název firmy</span>
         <input type="text" value={fleetName} maxLength={60} placeholder="H&H Security" onChange={(e) => setFleetName(e.target.value)} />
@@ -267,7 +279,10 @@ export function FleetSettingsPanel({ fleet, onOpenFleet }: { fleet: Fleet; onOpe
       {member ? (
         <>
           <div className="fleet-member-head">
-            <span className="fleet-avatar tone-good is-online" aria-hidden="true">
+            <span
+              className={`fleet-avatar ${member.problem ? "tone-caution" : "tone-good is-online"}`}
+              aria-hidden="true"
+            >
               <Icon name="building" size={18} />
             </span>
             <span>
@@ -278,6 +293,11 @@ export function FleetSettingsPanel({ fleet, onOpenFleet }: { fleet: Fleet; onOpe
               </span>
             </span>
           </div>
+          {member.problem ? (
+            <p className="notice tone-caution" role="status">
+              {describeError({ code: member.problem, message: "" })}
+            </p>
+          ) : null}
           <PolicyLists policy={member.policy} />
           <p className="care-note">
             Otisk klíče správce <code>{groupFingerprint(member.adminFingerprint)}</code>. Každý zásah na dálku uvidíte
@@ -314,7 +334,7 @@ export function FleetSettingsPanel({ fleet, onOpenFleet }: { fleet: Fleet; onOpe
               type="text"
               className="code-input"
               value={code}
-              placeholder="HHF1-XXXX-XXXX-XXXX-XXXX-XXXX"
+              placeholder="HHF1-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX"
               spellCheck={false}
               autoCapitalize="characters"
               aria-label="Kód od správce"

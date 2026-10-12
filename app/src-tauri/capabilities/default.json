@@ -40,6 +40,16 @@
     "allow-clean-empty-trash",
     "allow-speed-report",
     "allow-speed-quit",
-    "allow-speed-startup"
+    "allow-speed-startup",
+    "allow-fleet-state",
+    "allow-fleet-create",
+    "allow-fleet-refresh",
+    "allow-fleet-invite",
+    "allow-fleet-command",
+    "allow-fleet-remove-device",
+    "allow-fleet-join-preview",
+    "allow-fleet-join",
+    "allow-fleet-leave",
+    "allow-fleet-approve"
   ]
 }

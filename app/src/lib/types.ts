@@ -499,6 +499,8 @@ export interface FleetThreat {
 
 /** Šifrovaná zpráva z Macu, ověřená podpisem jeho klíče. */
 export interface FleetReport {
+  /** Pořadí zpráv Macu (starší zpráva nepřepíše novější). */
+  seq: number;
   createdAtMs: number;
   appVersion: string;
   osVersion: string;
@@ -507,7 +509,7 @@ export interface FleetReport {
   protectionNote: string | null;
   rulesVersion: string;
   rulesCheckedAtMs: number | null;
-  lastScan: { atMs: number; kind: "quick" | "full" | "custom"; files: number; threats: number } | null;
+  lastScan: { atMs: number; files: number; threats: number } | null;
   threats: FleetThreat[];
   quarantined: number;
   disk: { total: number; free: number } | null;
@@ -573,6 +575,8 @@ export interface FleetMembership {
   lastContactMs: number | null;
   policy: FleetPolicy;
   approvals: FleetApproval[];
+  /** Potíž se schránkou (kód chyby), jinak null. */
+  problem: string | null;
 }
 
 export interface FleetJoinPreview {

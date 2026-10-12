@@ -35,6 +35,16 @@ fn main() {
         "speed_report",
         "speed_quit",
         "speed_startup",
+        "fleet_state",
+        "fleet_create",
+        "fleet_refresh",
+        "fleet_invite",
+        "fleet_command",
+        "fleet_remove_device",
+        "fleet_join_preview",
+        "fleet_join",
+        "fleet_leave",
+        "fleet_approve",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");

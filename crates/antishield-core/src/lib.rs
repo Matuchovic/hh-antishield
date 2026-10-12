@@ -19,6 +19,7 @@ pub mod cleanup;
 mod container;
 pub mod engine;
 pub mod error;
+pub mod fleet;
 pub mod inspect;
 pub mod matcher;
 mod platform;

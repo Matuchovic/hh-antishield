@@ -11,6 +11,7 @@
 mod agent;
 mod care;
 mod commands;
+mod fleet;
 mod instance;
 mod services;
 mod settings;
@@ -316,6 +317,9 @@ fn main() {
                         services::start_privacy_monitor(handle.clone());
                         services::catch_up(&handle);
                     }
+                    // Firemní správa běží i bez enginu (správce engine nepotřebuje,
+                    // příkazy pro Mac bez něj skončí srozumitelnou chybou).
+                    fleet::start(&handle);
                 })?;
             Ok(())
         })
@@ -371,6 +375,16 @@ fn main() {
             care::speed_report,
             care::speed_quit,
             care::speed_startup,
+            fleet::fleet_state,
+            fleet::fleet_create,
+            fleet::fleet_refresh,
+            fleet::fleet_invite,
+            fleet::fleet_command,
+            fleet::fleet_remove_device,
+            fleet::fleet_join_preview,
+            fleet::fleet_join,
+            fleet::fleet_leave,
+            fleet::fleet_approve,
         ])
         .build(tauri::generate_context!())
         .expect("H&H AntiShield se nepodařilo spustit");

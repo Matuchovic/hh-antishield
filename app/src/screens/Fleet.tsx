@@ -27,7 +27,15 @@ import {
   shortName,
   type FleetTone,
 } from "../lib/fleet";
-import { capitalize, describeError, displayPath, formatBytes, formatCount, formatDateTime } from "../lib/format";
+import {
+  capitalize,
+  describeError,
+  displayPath,
+  formatBytes,
+  formatCount,
+  formatDateTime,
+  translateReason,
+} from "../lib/format";
 import { SEVERITY_LABELS } from "../lib/story";
 import type {
   CleanCategory,
@@ -586,7 +594,9 @@ function DeviceSheet({
                     : report.protection === "manualScanOnly"
                       ? "Omezené, jen ruční kontrola"
                       : "Nefunguje"}
-                  {report.protectionNote ? <span className="muted"> · {report.protectionNote}</span> : null}
+                  {report.protectionNote ? (
+                    <span className="muted"> · {translateReason(report.protectionNote)}</span>
+                  ) : null}
                 </dd>
               </div>
               <div>
@@ -604,8 +614,7 @@ function DeviceSheet({
                       {formatDateTime(report.lastScan.atMs)}
                       <span className="muted">
                         {" "}
-                        · {report.lastScan.kind === "full" ? "úplná" : report.lastScan.kind === "quick" ? "rychlá" : "vlastní"},{" "}
-                        {formatCount(report.lastScan.files, "soubor", "soubory", "souborů")},{" "}
+                        · {formatCount(report.lastScan.files, "soubor", "soubory", "souborů")},{" "}
                         {report.lastScan.threats ? formatCount(report.lastScan.threats, "nález", "nálezy", "nálezů") : "bez nálezu"}
                       </span>
                     </>

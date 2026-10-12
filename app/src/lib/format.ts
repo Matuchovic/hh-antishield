@@ -239,6 +239,29 @@ export function describeOutcome(outcome: ScanOutcome): string {
 }
 
 const ERRORS: Record<string, string> = {
+  fleet_invalid_code: "Kód není platný. Zkontrolujte, že je opsaný celý.",
+  fleet_activation_invalid: "Aktivační kód neplatí nebo už byl použitý.",
+  fleet_invite_invalid: "Pozvánka už neplatí nebo byla použitá. Požádejte správce o nový kód.",
+  fleet_not_authentic: "Pozvánka nebo zpráva není pravá (podpis nesouhlasí). Nic se nezměnilo.",
+  fleet_wrong_target: "Zpráva patří jinému Macu nebo jiné firmě.",
+  fleet_expired: "Platnost vypršela.",
+  fleet_not_allowed: "Tohle firemní správa nedovoluje.",
+  fleet_malformed: "Data ze schránky jsou poškozená.",
+  fleet_random: "Systém nedal náhodná čísla pro klíče. Zkuste to znovu.",
+  fleet_unreachable: "Schránka firemní správy teď není dostupná. Zkuste to za chvíli.",
+  fleet_protocol: "Schránka odpověděla nečekaně. Zkuste to později.",
+  fleet_not_authorized: "Schránka přístup odmítla.",
+  fleet_bad_request: "Schránka požadavek odmítla.",
+  fleet_limit: "Schránka narazila na limit (příliš mnoho Maců, pozvánek nebo příkazů).",
+  fleet_unknown_device: "Tento Mac už ve firmě není.",
+  fleet_unknown_command: "Schránka příkaz nezná.",
+  fleet_exists: "Tento Mac už firmu spravuje.",
+  fleet_member_exists: "Tento Mac už je připojený k firmě.",
+  fleet_no_admin: "Tento Mac žádnou firmu nespravuje.",
+  fleet_no_member: "Tento Mac není připojený k firmě.",
+  fleet_unknown_approval: "Žádost už neplatí.",
+  fleet_save: "Nastavení firemní správy se nepodařilo uložit.",
+  fleet_removed: "Schránka tento Mac nezná. Správce ho možná odebral; odpojte ho od firmy.",
   rule_pack_signature_invalid: "Podpis sady pravidel je neplatný. Engine pravidla odmítl a kontrolu nespustí.",
   rule_pack_unknown_key: "Sada pravidel je podepsaná neznámým klíčem. Engine ji odmítl.",
   rule_pack_malformed: "Sada pravidel je poškozená. Engine ji odmítl.",
@@ -328,6 +351,28 @@ const AUDIT_KINDS: Record<string, string> = {
   quarantine_failed: "Přesun do karantény selhal",
   remediated: "Vyčištění",
   rule_pack_installed: "Nová sada pravidel nainstalována",
+  cleanup: "Úklid",
+  fleet_created: "Založena firemní správa",
+  fleet_invite: "Pozvánka pro firemní Mac",
+  fleet_command_sent: "Příkaz pro firemní Mac",
+  fleet_device_removed: "Mac odebrán z firmy",
+  fleet_joined: "Mac připojen k firmě",
+  fleet_left: "Mac odpojen od firmy",
+  fleet_command: "Zásah správce firmy",
+};
+
+const FLEET_KINDS: Record<string, string> = {
+  cleanup: "úklid",
+  scan: "kontrola",
+  isolate: "izolace hrozeb",
+  unenroll: "odebrání z firmy",
+};
+
+const FLEET_STATES: Record<string, string> = {
+  awaitingConsent: "čeká na váš souhlas",
+  done: "hotovo",
+  declined: "odmítnuto",
+  failed: "nepovedlo se",
 };
 
 /** Problém s integritou auditu z technického popisu enginu. */
@@ -380,6 +425,37 @@ export function describeAuditEvent(event: AuditEvent): { title: string; detail: 
       return { title, detail: `verze ${String(d.engineVersion ?? "")}` };
     case "audit_integrity_issue":
       return { title, detail: describeIntegrityIssue(String(d.detail ?? ""), d.sealed === true) };
+    case "cleanup": {
+      const freed = Number(d.freedBytes ?? 0);
+      const trashed = Number(d.trashedBytes ?? 0);
+      const parts = [
+        freed ? `uvolněno ${formatBytes(freed)}` : null,
+        trashed ? `do Koše ${formatBytes(trashed)}` : null,
+        d.source === "fleet" ? "na dálku" : null,
+      ].filter(Boolean);
+      return { title, detail: parts.join(", ") };
+    }
+    case "fleet_command": {
+      const kind = FLEET_KINDS[String(d.kind ?? "")] ?? String(d.kind ?? "");
+      const state = FLEET_STATES[String(d.state ?? "")] ?? "";
+      const freed = Number(d.freedBytes ?? 0) + Number(d.trashedBytes ?? 0);
+      return {
+        title,
+        detail: [capitalize(kind), state, freed ? formatBytes(freed) : null].filter(Boolean).join(", "),
+      };
+    }
+    case "fleet_command_sent":
+      return { title, detail: capitalize(FLEET_KINDS[String(d.kind ?? "")] ?? "") };
+    case "fleet_created":
+    case "fleet_joined":
+      return { title, detail: String(d.fleetName ?? "") };
+    case "fleet_left":
+      return {
+        title,
+        detail: `${String(d.fleetName ?? "")}${d.by === "admin" ? ", odebral správce" : ""}`,
+      };
+    case "fleet_invite":
+      return { title, detail: String(d.name ?? "") };
     default:
       return { title, detail: "" };
   }

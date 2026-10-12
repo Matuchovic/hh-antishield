@@ -74,7 +74,8 @@ export const api = {
   speedStartup: (id: string, enabled: boolean) => invoke<SpeedReport>("speed_startup", { id, enabled }),
   // Firemní správa: správce (podepisuje příkazy) i spravovaný Mac.
   fleetState: () => invoke<FleetState>("fleet_state"),
-  fleetCreate: (fleetName: string, adminName: string) => invoke<FleetAdmin>("fleet_create", { fleetName, adminName }),
+  fleetCreate: (activation: string, fleetName: string, adminName: string) =>
+    invoke<FleetAdmin>("fleet_create", { activation, fleetName, adminName }),
   fleetRefresh: () => invoke<FleetAdmin>("fleet_refresh"),
   fleetInvite: (name: string) => invoke<FleetInvite>("fleet_invite", { name }),
   fleetCommand: (deviceIds: string[], kind: FleetCommandKind, categories: CleanCategory[]) =>

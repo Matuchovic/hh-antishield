@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fleet-invite"
+description = "Enables the fleet_invite command without any pre-configured scope."
+commands.allow = ["fleet_invite"]
+
+[[permission]]
+identifier = "deny-fleet-invite"
+description = "Denies the fleet_invite command without any pre-configured scope."
+commands.deny = ["fleet_invite"]
