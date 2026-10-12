@@ -1,6 +1,6 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.5.0)
+Aktualizováno: 2026-10-12 (v0.6.0)
 
 ## Stav
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
@@ -9,6 +9,15 @@ Aktualizováno: 2026-10-12 (v0.5.0)
   enginu, když YARA-X spustí kód přeložený za běhu („Code Signature
   Invalid“). Opraveno ve v0.2.1 (výjimka `allow-unsigned-executable-memory`);
   0.2.0 se sama aktualizovat nestihne, 0.2.1 je potřeba nainstalovat z DMG.
+- v0.6.0: Čištění a zrychlení. Čištění hledá v domovské složce mezipaměti,
+  staré protokoly, vývojářské mezipaměti, staré instalátory, zbytky po
+  aplikacích a velké staré soubory; uklidí jen potvrzené položky z vlastního
+  skenu, soubory uživatele do Koše, Koš vysype jen po výslovném potvrzení.
+  Zrychlení měří disk, tlak na paměť, odkládání na disk, procesor a dobu běhu,
+  ukazuje náročné aplikace se šetrným ukončením a vratně vypíná položky po
+  přihlášení. Plátno s jádrem: nalezená data obíhají jako částice podle
+  skutečné velikosti a úklid pohltí přesně to, co se uklidilo.
+  Hlídání nebezpečného chování programů v 0.6 není.
 - v0.5.0: radar ochrany v reálném čase (přehled i obrazovka Ochrana; jen
   skutečně zkontrolované položky, počty, živý přehled), příběh útoku ke každé
   hrozbě (původ souboru, uložení, kdo program spustil, zachycení, zásah,
@@ -44,7 +53,7 @@ Aktualizováno: 2026-10-12 (v0.5.0)
   složek, procesy a položky po spuštění, stav systému, audit, self-test.
 - `crates/antishield-cli` – `antishield` (scan, selftest, rules build/sign/
   verify, audit verify).
-- `app/` – Tauri 2 + React; 25 povolených příkazů, přísná CSP, služby na
+- `app/` – Tauri 2 + React; 33 povolených příkazů, přísná CSP, služby na
   pozadí (hlídání, pravidla po 6 h, plánovač), lišta, single-instance.
 
 ## Rozhodnutí
@@ -90,12 +99,40 @@ Aktualizováno: 2026-10-12 (v0.5.0)
   30 snímků/s, se skrytým oknem a omezením pohybu stojí.
 - Animace jen transform/opacity, bez filtru blur a bez `will-change` na
   animovaných vrstvách (rozmazaný rastr ve WebView2), pauza při skrytém okně.
+- Čištění: jen domovská složka; mazat (smazat) jde jen to, co si aplikace
+  vytvoří znovu (mezipaměti, protokoly starší než týden, vývojářské
+  mezipaměti); instalátory, zbytky aplikací, velké soubory a archivy Xcode
+  jdou do Koše přes systém (crate `trash`, na macOS NSFileManager, bez
+  ovládání Finderu). Mezipaměť změněná v posledních 15 minutách (na Windows
+  dočasné soubory za den) a mezipaměť běžící aplikace se nepředvybírá.
+  Velké soubory se nehledají ani neuklízejí ve složkách synchronizovaných
+  s cloudem (Dropbox, OneDrive, Google Drive, Box, …): Koš by je smazal
+  i na ostatních zařízeních.
+  Každý zásah znovu ověří umístění podle kategorie a že žádný článek cesty
+  není odkaz. Zápis do auditu (`cleanup`).
+- Zrychlení: žádné „čištění RAM“ ani zásahy do systému. Ukončení jen šetrné
+  (macOS Apple Event „quit“ s `NSAppleEventsUsageDescription` a entitlementem
+  `automation.apple-events`; jinak SIGTERM; Windows `taskkill` bez /F).
+  Položky po přihlášení se odkládají do `startup-disabled` v datech aplikace
+  (`launchctl bootout`/`bootstrap`), vlastní agent nejde vypnout.
+- Hlídání nebezpečného chování programů se do 0.6 nedostalo; aplikace ho
+  nikde netvrdí.
 
 ## Testy (2026-10-12, lokálně)
-- Rust: 104 testů na Linuxu (jádro 79, CLI 4, aplikace 21) + test PKG/DMG
-  jen na macOS, clippy `-D warnings`, rustfmt.
-- UI: 18 testů vitest (příběh útoku: shrnutí, kroky, doporučení, aplikace
-  v balíčku, příloha e-mailu), typecheck, build.
+- Rust: 111 testů na Linuxu (jádro 88, CLI 2, aplikace 21) + test PKG/DMG
+  jen na macOS, clippy `-D warnings`, rustfmt. Nové: čištění (nález
+  a úklid, podvržená/přesunutá položka, odkazy, zbytky aplikací, právě
+  používaná mezipaměť, složky synchronizované s cloudem), zrychlení (měření, vratné položky po přihlášení,
+  SIGTERM s ověřením konce, odmítnutí systémových programů a sebe).
+- UI: 26 testů vitest (+ čištění a zrychlení: výběr, Koš zvlášť, kategorie,
+  překlady, prahy disku a paměti, doporučení, doba běhu), typecheck, build.
+- 0.6: CI zelené (Linux, macOS, Windows), build-only Release (DMG
+  s self-testem v podepsaném balíčku, instalátor Windows) zelený.
+- 0.6: obrazovka Čištění a zrychlení v Chromiu s náhradou IPC (hledání
+  s průběhem, výsledek, zvýraznění kategorie, položky, úklid s pohlcením
+  a selháním jedné položky, potvrzení Koše, měření, ukončení aplikace,
+  vypnutí položky po přihlášení); bez chyb v konzoli. Kód jen pro macOS
+  a Windows (Koš, Apple Events, launchctl, taskkill) ověří CI a uživatel.
 - 0.5: radar a příběh ověřené v Chromiu s náhradou IPC a proudem událostí
   (body, zásah hrozby, živý přehled, Esc, Tab); s omezením pohybu plátno
   stojí. V softwarovém vykreslování kontejneru nejde měřit skutečné snímky;
@@ -137,6 +174,7 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Sloučit PR s 0.5.0 → Release (publish) → na Macu: stáhnout EICAR v prohlížeči
-(radar bod, záblesk jádra, příběh útoku s adresou a prohlížečem), spustit
-rychlou kontrolu (paprsek zrychlí), ověřit plynulost animací.
+Sloučit PR #10 s 0.6.0 → Release (publish) → na Macu: Čištění (najít, projít
+položky, vyčistit, ověřit instalátory v Koši), Zrychlení (ukončit aplikaci:
+macOS se poprvé zeptá na ovládání; vypnout a zase zapnout položku po
+přihlášení), plynulost plátna.

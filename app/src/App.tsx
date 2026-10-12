@@ -9,6 +9,7 @@ import { describeError } from "./lib/format";
 import { useAntiShield } from "./lib/useAntiShield";
 import { useUpdater } from "./lib/useUpdater";
 import { About } from "./screens/About";
+import { Care } from "./screens/Care";
 import { Events } from "./screens/Events";
 import { Overview } from "./screens/Overview";
 import { Protection } from "./screens/Protection";
@@ -26,6 +27,7 @@ const SCREENS: Screen[] = [
   "realtime",
   "quarantine",
   "systemcare",
+  "care",
   "settings",
   "about",
 ];
@@ -101,6 +103,8 @@ export function App() {
         return <Quarantine app={app} />;
       case "systemcare":
         return <SystemSecurity app={app} />;
+      case "care":
+        return <Care app={app} />;
       case "events":
         return <Events app={app} />;
       case "settings":

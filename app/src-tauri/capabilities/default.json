@@ -32,6 +32,14 @@
     "allow-save-settings",
     "allow-pick-watch-folder",
     "allow-check-update",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-clean-scan",
+    "allow-clean-cancel",
+    "allow-clean-last",
+    "allow-clean-items",
+    "allow-clean-empty-trash",
+    "allow-speed-report",
+    "allow-speed-quit",
+    "allow-speed-startup"
   ]
 }

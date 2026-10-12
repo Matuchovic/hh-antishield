@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clean-scan"
+description = "Enables the clean_scan command without any pre-configured scope."
+commands.allow = ["clean_scan"]
+
+[[permission]]
+identifier = "deny-clean-scan"
+description = "Denies the clean_scan command without any pre-configured scope."
+commands.deny = ["clean_scan"]

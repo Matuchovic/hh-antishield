@@ -11,6 +11,7 @@ export type Screen =
   | "realtime"
   | "quarantine"
   | "systemcare"
+  | "care"
   | "settings"
   | "about";
 
@@ -27,6 +28,7 @@ const ENTRIES: Entry[] = [
   { id: "realtime", label: "Ochrana v reálném čase", icon: "shield" },
   { id: "quarantine", label: "Karanténa", icon: "box" },
   { id: "systemcare", label: "Bezpečnost systému", icon: "gauge" },
+  { id: "care", label: "Čištění a zrychlení", icon: "sparkle" },
   { id: "events", label: "Události", icon: "clock" },
   { id: "settings", label: "Nastavení", icon: "sliders" },
   { id: "about", label: "O aplikaci", icon: "info" },

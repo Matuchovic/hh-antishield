@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Zrychlení: tlačítko Ukončit pošle aplikaci stejný požadavek jako ⌘Q. macOS se poprvé zeptá. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>AntiShield požádá aplikaci o běžné ukončení, jen když u ní v Zrychlení kliknete na Ukončit. Aplikace se sama zeptá na uložení rozdělané práce.</string>
+</dict>
+</plist>

@@ -136,6 +136,8 @@ pub struct AppState {
     pub stories: Mutex<StoryBook>,
     /// Co ochrana zkontrolovala od spuštění (radar).
     pub activity: Mutex<ActivityLog>,
+    /// Čištění a zrychlení: poslední sken a měření.
+    pub care: crate::care::CareState,
 }
 
 /// Kontrola souborů, které přibyly, když ochrana neběžela.
@@ -179,6 +181,7 @@ impl AppState {
             privacy: Mutex::new(None),
             stories: Mutex::new(stories),
             activity: Mutex::new(ActivityLog::default()),
+            care: crate::care::CareState::default(),
         }
     }
 

@@ -9,6 +9,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+mod care;
 mod commands;
 mod instance;
 mod services;
@@ -362,6 +363,14 @@ fn main() {
             commands::pick_watch_folder,
             commands::check_update,
             commands::install_update,
+            care::clean_scan,
+            care::clean_cancel,
+            care::clean_last,
+            care::clean_items,
+            care::clean_empty_trash,
+            care::speed_report,
+            care::speed_quit,
+            care::speed_startup,
         ])
         .build(tauri::generate_context!())
         .expect("H&H AntiShield se nepodařilo spustit");

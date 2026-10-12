@@ -1,4 +1,4 @@
-# Stav funkcí – v0.5
+# Stav funkcí – v0.6
 
 Platí pravidlo: aplikace nikdy netvrdí ochranu, kterou nemá. V0.2 hlásí
 „Váš Mac je hlídaný“, jen když skutečně běží hlídání složek i ověřené
@@ -36,6 +36,10 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 | Poslední kontrola po restartu; nález z ní se před vyčištěním znovu ověří | unit testy `state.rs` |
 | Radar ochrany: skutečně zkontrolované položky z hlídání (stažené, soubory, přílohy, programy, položky po přihlášení), počty a živý přehled; při kontrole i procházené soubory | unit testy `story.rs` (počty, pásma); průchod v Chromiu; na Macu ověří uživatel |
 | Příběh útoku: původ (adresa, stránka, prohlížeč, odesílatel e-mailu), kdo program spustil, zachycení, zásah, doporučení; uložený jen k zobrazení | unit testy `provenance.rs`, `story.rs`, `story.test.ts`; metadata macOS ověří uživatel |
+| Čištění: mezipaměti aplikací, staré protokoly, vývojářské mezipaměti, staré instalátory, zbytky po odinstalovaných aplikacích, velké staré soubory, Koš; jen v domovské složce (bez složek synchronizovaných s cloudem), zásah jen podle vlastního skenu s novým ověřením cesty (bez odkazů), soubory uživatele do Koše, vysypání Koše zvlášť po potvrzení; běžící a právě používané mezipaměti se nepředvybírají; zápis do auditu | unit testy `cleanup.rs` (podvržená a přesunutá položka, odkazy, nainstalované aplikace, cloudové složky), `care.test.ts`; Koš přes systém a skutečný Mac ověří uživatel |
+| Zrychlení: volné místo, tlak na paměť (macOS), odkládání na disk, procesor, doba běhu; doporučení jen z naměřených hodnot | unit testy `speed.rs`, `care.test.ts` |
+| Náročné aplikace (i s pomocnými procesy) a jejich šetrné ukončení: Apple Event „quit“ jako ⌘Q, SIGTERM, na Windows zavření oken; nikdy násilím, systémové programy ani AntiShield ne, ověření PID | unit testy `speed.rs` (SIGTERM s potvrzením konce, odmítnutí systémových programů a sebe); Apple Events ověří uživatel na Macu |
+| Položky po přihlášení: vratné vypnutí a zapnutí uživatelských položek (odloží se do složky aplikace), vlastní agent AntiShieldu nejde vypnout; systémové položky jen s odkazem do Nastavení systému | unit test `speed.rs`; launchctl ověří uživatel na Macu |
 | Aktualizace aplikace přes banner (podpis, GitHub Releases) | vydání 0.1.1 a 0.1.2 |
 
 ## Částečně
@@ -53,7 +57,8 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 
 ## Chybí (plánováno)
 
-Blokování spouštění programů předem (macOS Endpoint Security vyžaduje
+Hlídání nebezpečného chování programů (posloupnosti akcí typických pro
+nejhorší škodlivý software); blokování spouštění programů předem (macOS Endpoint Security vyžaduje
 entitlement od Applu a Developer ID; dnes se škodlivý program ukončí až po
 spuštění), internetová ochrana (blokování webů vyžaduje Network Extension
 od Applu), ochrana e-mailů mimo Apple Mail, ochrana soukromí na Windows,

@@ -575,6 +575,11 @@ impl Engine {
         Ok(item)
     }
 
+    /// Zapíše do auditu zásah, který provedla aplikace (čištění, zrychlení).
+    pub fn record_action(&self, kind: &str, data: serde_json::Value) {
+        self.audit(kind, data, true);
+    }
+
     fn audit(&self, kind: &str, data: serde_json::Value, sync: bool) {
         let ok = match self.audit.lock() {
             Ok(mut log) => log.append(kind, data, sync).is_ok(),

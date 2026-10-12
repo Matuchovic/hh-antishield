@@ -51,6 +51,7 @@ const TILES: { n: string; title: string; text: string; art: TileArtKind; screen:
   { n: "01", title: "Kontrola počítače", text: "Rychlá, úplná nebo jen vybrané složky.", art: "folder", screen: "scan" },
   { n: "02", title: "Ochrana v reálném čase", text: "Hlídá stažené soubory, Plochu, Dokumenty a spuštěné programy.", art: "lock", screen: "realtime" },
   { n: "03", title: "Bezpečnost systému", text: "Gatekeeper, SIP, FileVault a firewall.", art: "wrench", screen: "systemcare" },
+  { n: "04", title: "Čištění a zrychlení", text: "Uvolní místo a ukáže, co počítač brzdí.", art: "vortex", screen: "care" },
 ];
 
 function layerText(kind: ComponentKind, state: ComponentState): string {

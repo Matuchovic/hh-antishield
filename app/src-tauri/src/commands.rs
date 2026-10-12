@@ -266,6 +266,10 @@ fn system_settings_url(check_id: &str) -> Option<&'static str> {
         "input" => {
             Some("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
         }
+        "automation" => {
+            Some("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation")
+        }
+        "loginItems" => Some("x-apple.systempreferences:com.apple.LoginItems-Settings.extension"),
         _ => None,
     }
 }
@@ -275,6 +279,7 @@ fn system_settings_url(check_id: &str) -> Option<&'static str> {
     match check_id {
         "defender" => Some("windowsdefender:"),
         "firewall" => Some("windowsdefender://network/"),
+        "loginItems" => Some("ms-settings:startupapps"),
         _ => None,
     }
 }

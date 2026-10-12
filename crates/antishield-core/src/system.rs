@@ -307,7 +307,120 @@ pub fn is_startup_location(path: &Path) -> bool {
     startup_dirs().iter().any(|dir| dir == parent)
 }
 
-fn program_from_plist(path: &Path) -> Option<(String, Option<PathBuf>)> {
+/// Aplikace (balíček `.app`) podle jejího Info.plist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppBundle {
+    pub path: PathBuf,
+    pub id: String,
+    pub name: String,
+}
+
+/// Jen bezpečné znaky (identifikátor může jít do příkazu AppleScriptu).
+pub(crate) fn valid_bundle_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 200
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+}
+
+/// Načte identifikátor a jméno balíčku `.app`.
+pub fn read_app_bundle(app: &Path) -> Option<AppBundle> {
+    let info = app.join("Contents/Info.plist");
+    if fs::metadata(&info).ok()?.len() > MAX_PLIST_BYTES {
+        return None;
+    }
+    let value = plist::Value::from_file(&info).ok()?;
+    let dict = value.as_dictionary()?;
+    let id = dict.get("CFBundleIdentifier")?.as_string()?.to_string();
+    if !valid_bundle_id(&id) {
+        return None;
+    }
+    let name = ["CFBundleDisplayName", "CFBundleName"]
+        .iter()
+        .find_map(|key| dict.get(key).and_then(|v| v.as_string()))
+        .map(str::to_string)
+        .filter(|n| !n.trim().is_empty())
+        .or_else(|| app.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_default()
+        .chars()
+        .take(120)
+        .collect();
+    Some(AppBundle {
+        path: app.to_path_buf(),
+        id,
+        name,
+    })
+}
+
+/// Balíčky `.app`, ve kterých program leží, od vnějšího (hlavní aplikace)
+/// k vnitřním (pomocníci).
+pub fn app_bundle_paths(exe: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = exe
+        .ancestors()
+        .filter(|a| a.extension().is_some_and(|e| e == "app"))
+        .map(Path::to_path_buf)
+        .collect();
+    found.reverse();
+    found
+}
+
+/// Identifikátory běžících aplikací včetně jejich pomocníků (jen macOS).
+pub fn running_app_ids() -> HashSet<String> {
+    let mut ids = HashSet::new();
+    if !cfg!(target_os = "macos") {
+        return ids;
+    }
+    let mut seen = HashSet::new();
+    for process in running_processes() {
+        for bundle in app_bundle_paths(&process.exe) {
+            if seen.insert(bundle.clone())
+                && let Some(app) = read_app_bundle(&bundle)
+            {
+                ids.insert(app.id);
+            }
+        }
+    }
+    ids
+}
+
+/// Identifikátory nainstalovaných aplikací: Aplikace, systémové aplikace
+/// a ~/Aplikace, i o jednu složku hlouběji (např. sady Office). Jen macOS.
+pub fn installed_app_ids(home: &Path) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    if !cfg!(target_os = "macos") {
+        return ids;
+    }
+    let roots = [
+        PathBuf::from("/Applications"),
+        PathBuf::from("/System/Applications"),
+        home.join("Applications"),
+    ];
+    let is_app = |p: &Path| p.extension().is_some_and(|e| e == "app");
+    for root in roots {
+        let Ok(read) = fs::read_dir(&root) else {
+            continue;
+        };
+        for path in read.filter_map(|e| e.ok().map(|e| e.path())).take(5_000) {
+            if is_app(&path) {
+                ids.extend(read_app_bundle(&path).map(|a| a.id));
+            } else if path.is_dir()
+                && let Ok(inner) = fs::read_dir(&path)
+            {
+                for app in inner
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| is_app(p))
+                    .take(500)
+                {
+                    ids.extend(read_app_bundle(&app).map(|a| a.id));
+                }
+            }
+        }
+    }
+    ids
+}
+
+pub(crate) fn program_from_plist(path: &Path) -> Option<(String, Option<PathBuf>)> {
     if fs::symlink_metadata(path).ok()?.len() > MAX_PLIST_BYTES {
         return None;
     }

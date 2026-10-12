@@ -393,7 +393,9 @@ mod tests {
         assert!(err.to_string().contains("in use"), "{err}");
 
         drop(first);
-        let mut second = AuditLog::open_waiting(tmp.path(), Duration::ZERO).unwrap();
+        // Krátké čekání: proces spouštěný souběžným testem může po fork držet
+        // kopii zámku, než spustí svůj program.
+        let mut second = AuditLog::open_waiting(tmp.path(), Duration::from_secs(5)).unwrap();
         assert!(second.integrity_issue().is_none());
         assert_eq!(second.append("second", json!({}), false).unwrap(), 2);
         assert!(verify_dir(tmp.path()).unwrap().ok);
