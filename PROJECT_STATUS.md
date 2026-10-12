@@ -126,6 +126,8 @@ Aktualizováno: 2026-10-12 (v0.6.0)
   SIGTERM s ověřením konce, odmítnutí systémových programů a sebe).
 - UI: 26 testů vitest (+ čištění a zrychlení: výběr, Koš zvlášť, kategorie,
   překlady, prahy disku a paměti, doporučení, doba běhu), typecheck, build.
+- 0.6: CI zelené (Linux, macOS, Windows), build-only Release (DMG
+  s self-testem v podepsaném balíčku, instalátor Windows) zelený.
 - 0.6: obrazovka Čištění a zrychlení v Chromiu s náhradou IPC (hledání
   s průběhem, výsledek, zvýraznění kategorie, položky, úklid s pohlcením
   a selháním jedné položky, potvrzení Koše, měření, ukončení aplikace,
@@ -172,7 +174,7 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Sloučit PR #9 s 0.6.0 → Release (publish) → na Macu: Čištění (najít, projít
+Sloučit PR #10 s 0.6.0 → Release (publish) → na Macu: Čištění (najít, projít
 položky, vyčistit, ověřit instalátory v Koši), Zrychlení (ukončit aplikaci:
 macOS se poprvé zeptá na ovládání; vypnout a zase zapnout položku po
 přihlášení), plynulost plátna.
