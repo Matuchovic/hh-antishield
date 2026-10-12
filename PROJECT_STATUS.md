@@ -1,9 +1,10 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
+Aktualizováno: 2026-10-12 (v0.7.0 vydána)
 
 ## Stav
-- v0.7.0 (větev `claude/v0.7-fleet`, nevydáno): firemní správa. Správce
+- v0.7.0 vydána 12. 10. 2026 (PR #11, Release: DMG universal, instalátor
+  Windows, `latest.json` pro macOS Intel/Apple Silicon a Windows): firemní správa. Správce
   (CTO) na svém Macu vidí firemní Macy na mapě a v seznamu (ochrana,
   hrozby, disk, paměť, kolik jde uklidit) a posílá jim podepsané příkazy:
   kontrola, izolace hrozeb, úklid podle kategorií (i všem najednou).
@@ -248,7 +249,7 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-CI s krokem `live_relay_contract` proti živé schránce zelené → PR #11
-z konceptu, sloučit, Release 0.7.0 → na Macu správce: založit firmu, pozvat Mac,
-na firemním Macu připojit, poslat úklid a kontrolu, souhlas s instalátory,
-odpojení.
+Ověření na skutečných Macích (uživatel): na Macu správce založit firmu
+aktivačním kódem, pozvat Mac, na firemním Macu připojit, poslat kontrolu
+a úklid, souhlas s instalátory, odpojení. Volitelně tajná proměnná
+`ANTISHIELD_FLEET_ACTIVATION` pro celou cestu v CI.
