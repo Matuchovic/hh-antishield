@@ -1,9 +1,10 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.8.0 připravena v PR, čeká na vydání)
+Aktualizováno: 2026-10-12 (v0.8.0 vydána)
 
 ## Stav
-- v0.8.0 (větev `claude/v0.8-deep-management`, zatím nevydaná): rozšířená
+- v0.8.0 vydána 12. 10. 2026 (PR #13, Release: DMG universal, instalátor
+  Windows, `latest.json` pro macOS Intel/Apple Silicon a Windows): rozšířená
   správa firemního Macu. Platí až po souhlasu uživatele Macu: správce
   pošle žádost, uživatel vidí, co by správce navíc viděl a smí (nové
   položky označené), a rozhodne. Zásahy: hloubková údržba (mezipaměti
@@ -213,6 +214,13 @@ Aktualizováno: 2026-10-12 (v0.8.0 připravena v PR, čeká na vydání)
   (sysctl, ioreg, softwareupdate, Time Machine), restart, ukončení
   aplikací a aktualizaci na dálku ověří CI (překlad, clippy) a uživatel na
   skutečném Macu.
+- 0.8 CI: v PR #13 zelené na Linuxu, macOS i Windows. Clippy na macOS
+  napoprvé odhalil výřez řetězce před `as_bytes` v kódu jen pro macOS
+  (`inventory.rs`, ioreg); opraveno. Větve kódu pro macOS se teď dají
+  zkontrolovat i lokálně: kopie jádra, kde se `target_os = "macos"`
+  přepne na Linux (mimo `platform/`), a clippy s `-D warnings` prošel.
+  Release 0.8.0 zelený (DMG se self-testem v podepsaném balíčku,
+  instalátor Windows, podepsané archivy pro aktualizaci).
 - 0.7: jádro 10 testů firemní správy (kódy, vazba klíčů, podvržené klíče,
   příkazy jen podepsané/pro tento Mac/v platnosti/poprvé/v zásadách,
   soubory uživatele a Koš nikdy, šifrování proti úpravám a záměně druhu
@@ -295,8 +303,9 @@ Aktualizováno: 2026-10-12 (v0.8.0 připravena v PR, čeká na vydání)
   kontrolní znak podle starého otisku; je zneplatněný (`uses_left = 0`)
   a nahrazený novým (otisk `43f8ab42…`).
 - 0.8 na skutečném Macu neověřena. Mac Viktórie Ladikové běží na 0.7.0:
-  po vydání 0.8 ho je potřeba aktualizovat (banner v aplikaci) a uživatelka
-  musí potvrdit rozšířenou správu; do té doby jde jen základní správa.
+  aktualizuje se přes banner v aplikaci (0.7 aktualizaci na dálku neumí)
+  a uživatelka pak musí potvrdit rozšířenou správu; do té doby jde jen
+  základní správa.
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 
@@ -306,8 +315,8 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Po zeleném CI vydat 0.8.0 (se souhlasem uživatele). Pak na Macu Viktórie:
-aktualizovat na 0.8, správce požádá o rozšířenou správu, uživatelka
-potvrdí; ověřit detail (hardware, zabezpečení, výkon), hloubkovou údržbu,
-žádost o restart (povolit ovládání Finderu) a aktualizaci na dálku.
+Správce i Mac Viktórie aktualizovat na 0.8 (banner), správce požádá
+o rozšířenou správu, uživatelka potvrdí. Pak ověřit detail (hardware,
+zabezpečení, výkon), hloubkovou údržbu, žádost o restart (povolit ovládání
+Finderu) a při dalším vydání aktualizaci na dálku.
 Volitelně tajná proměnná `ANTISHIELD_FLEET_ACTIVATION` pro celou cestu v CI.
