@@ -453,3 +453,141 @@ export interface SpeedReport {
 }
 
 export type QuitOutcome = "quit" | "pending";
+
+// ---------- Firemní správa ----------
+// Správce (CTO) vidí firemní Macy a posílá jim podepsané příkazy; Mac je
+// provede jen v mezích, se kterými jeho uživatel souhlasil při připojení.
+
+export type FleetCommandKind = "cleanup" | "scan" | "isolate";
+
+export type FleetCommandState =
+  /** Čeká ve schránce, Mac je offline. */
+  | "queued"
+  /** Mac příkaz převzal a ověřil podpis. */
+  | "delivered"
+  | "running"
+  /** Část úklidu čeká na souhlas uživatele Macu. */
+  | "awaitingConsent"
+  | "done"
+  | "declined"
+  | "failed"
+  | "expired";
+
+export interface FleetCommand {
+  id: string;
+  kind: FleetCommandKind;
+  categories: CleanCategory[];
+  sentAtMs: number;
+  updatedAtMs: number;
+  state: FleetCommandState;
+  /** Úklid: uvolněno hned a přesunuto do Koše. */
+  freedBytes: number;
+  trashedBytes: number;
+  /** Kontrola: zkontrolované soubory a nálezy; izolace: izolované hrozby. */
+  files: number;
+  threats: number;
+  error: string | null;
+}
+
+export interface FleetThreat {
+  ruleName: string;
+  severity: Severity;
+  path: string;
+  detectedAtMs: number;
+  quarantined: boolean;
+}
+
+/** Šifrovaná zpráva z Macu, ověřená podpisem jeho klíče. */
+export interface FleetReport {
+  /** Pořadí zpráv Macu (starší zpráva nepřepíše novější). */
+  seq: number;
+  createdAtMs: number;
+  appVersion: string;
+  osVersion: string;
+  model: string;
+  protection: ProtectionLevel;
+  protectionNote: string | null;
+  rulesVersion: string;
+  rulesCheckedAtMs: number | null;
+  lastScan: { atMs: number; files: number; threats: number } | null;
+  threats: FleetThreat[];
+  quarantined: number;
+  disk: { total: number; free: number } | null;
+  memory: { total: number; used: number; pressure: MemoryPressure | null };
+  uptimeSecs: number;
+  /** Kolik jde uklidit, jen velikosti po kategoriích (žádné názvy souborů). */
+  cleanup: { measuredAtMs: number; categories: { category: CleanCategory; bytes: number }[] } | null;
+}
+
+export interface FleetDevice {
+  id: string;
+  /** Jméno, které správce zadal při pozvání. */
+  name: string;
+  fingerprint: string;
+  joinedAtMs: number;
+  /** Poslední spojení se schránkou (Mac se hlásí zhruba každou minutu). */
+  lastSeenMs: number | null;
+  /** Uživatel Mac od firmy odpojil. */
+  left: boolean;
+  report: FleetReport | null;
+  /** Poslední příkazy, nejnovější první. */
+  commands: FleetCommand[];
+}
+
+export interface FleetInvite {
+  id: string;
+  name: string;
+  code: string;
+  createdAtMs: number;
+  expiresAtMs: number;
+}
+
+export interface FleetPolicy {
+  /** Smí se na dálku hned (uživatel dostane oznámení). */
+  auto: CleanCategory[];
+  /** Jen po souhlasu uživatele Macu. Ostatní kategorie nikdy na dálku. */
+  consent: CleanCategory[];
+}
+
+export interface FleetAdmin {
+  fleetName: string;
+  adminName: string;
+  fingerprint: string;
+  policy: FleetPolicy;
+  devices: FleetDevice[];
+  invites: FleetInvite[];
+  relay: { reachable: boolean; checkedAtMs: number | null; error: string | null };
+}
+
+export interface FleetApproval {
+  id: string;
+  categories: CleanCategory[];
+  bytes: number;
+  requestedAtMs: number;
+  expiresAtMs: number;
+}
+
+export interface FleetMembership {
+  fleetName: string;
+  adminName: string;
+  adminFingerprint: string;
+  joinedAtMs: number;
+  lastContactMs: number | null;
+  policy: FleetPolicy;
+  approvals: FleetApproval[];
+  /** Potíž se schránkou (kód chyby), jinak null. */
+  problem: string | null;
+}
+
+export interface FleetJoinPreview {
+  fleetName: string;
+  adminName: string;
+  adminFingerprint: string;
+  deviceName: string;
+  policy: FleetPolicy;
+}
+
+export interface FleetState {
+  admin: FleetAdmin | null;
+  member: FleetMembership | null;
+}

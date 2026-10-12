@@ -4,7 +4,7 @@
 //! funkce [`summarize_protection`]: „chráněno“ vrátí jen tehdy, když běží
 //! a je ověřená ochrana v reálném čase i aktualizace. Ve v0.1 to nenastane nikdy.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +73,7 @@ pub struct ComponentStatus {
     pub state: ComponentState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ProtectionLevel {
     /// Engine nebo pravidla nejsou připravené.

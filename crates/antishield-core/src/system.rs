@@ -820,3 +820,87 @@ mod tests {
         assert!(!is_mail_store_file(&home.join("Downloads/invoice.pdf")));
     }
 }
+
+/// Popis počítače pro správce firmy: verze systému a model.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Machine {
+    pub os_version: String,
+    pub model: String,
+}
+
+/// Verze systému a model počítače (na macOS se volá `system_profiler`, trvá
+/// to i sekundu; aplikace výsledek drží v paměti).
+#[cfg(target_os = "macos")]
+pub fn machine() -> Machine {
+    use std::process::Command;
+    let text = |out: std::io::Result<std::process::Output>| {
+        out.ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|t| !t.is_empty())
+    };
+    let os_version = text(
+        Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output(),
+    )
+    .map_or_else(|| "macOS".to_string(), |v| format!("macOS {v}"));
+    let model = Command::new("/usr/sbin/system_profiler")
+        .args(["SPHardwareDataType", "-json"])
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+        .and_then(|value| {
+            let hw = value.get("SPHardwareDataType")?.get(0)?;
+            let name = hw.get("machine_name")?.as_str()?.to_string();
+            let chip = hw
+                .get("chip_type")
+                .or_else(|| hw.get("cpu_type"))
+                .and_then(|c| c.as_str());
+            Some(match chip {
+                Some(chip) => format!("{name} ({chip})"),
+                None => name,
+            })
+        })
+        .or_else(|| {
+            text(
+                Command::new("/usr/sbin/sysctl")
+                    .args(["-n", "hw.model"])
+                    .output(),
+            )
+        })
+        .unwrap_or_else(|| "Mac".to_string());
+    Machine { os_version, model }
+}
+
+#[cfg(windows)]
+pub fn machine() -> Machine {
+    use winreg::RegKey;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+    let model = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(r"HARDWARE\DESCRIPTION\System\BIOS", KEY_READ)
+        .ok()
+        .map(|bios| {
+            let read = |name: &str| bios.get_value::<String, _>(name).unwrap_or_default();
+            format!(
+                "{} {}",
+                read("SystemManufacturer"),
+                read("SystemProductName")
+            )
+            .trim()
+            .to_string()
+        })
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| "PC".to_string());
+    Machine {
+        os_version: sysinfo::System::long_os_version().unwrap_or_else(|| "Windows".into()),
+        model,
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn machine() -> Machine {
+    Machine {
+        os_version: sysinfo::System::long_os_version().unwrap_or_default(),
+        model: "PC".to_string(),
+    }
+}

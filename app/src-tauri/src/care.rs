@@ -129,6 +129,7 @@ pub fn clean_last(state: State<'_, AppState>) -> Option<CleanScan> {
 fn run_clean(
     app: &AppHandle,
     pick: impl Fn(&cleanup::CleanItem) -> bool,
+    source: &str,
 ) -> Result<CleanOutcome, ErrorDto> {
     let state = app.state::<AppState>();
     let _one_at_a_time = lock(&state.care.cleaning);
@@ -161,6 +162,7 @@ fn run_clean(
         app,
         "cleanup",
         json!({
+            "source": source,
             "freedBytes": outcome.freed_bytes,
             "trashedBytes": outcome.trashed_bytes,
             "cleaned": cleaned,
@@ -175,9 +177,11 @@ fn run_clean(
 #[tauri::command]
 pub async fn clean_items(app: AppHandle, ids: Vec<String>) -> Result<CleanOutcome, ErrorDto> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_clean(&app, |item| {
-            item.method != CleanMethod::EmptyTrash && ids.contains(&item.id)
-        })
+        run_clean(
+            &app,
+            |item| item.method != CleanMethod::EmptyTrash && ids.contains(&item.id),
+            "user",
+        )
     })
     .await
     .map_err(|e| error("clean", &e.to_string()))?
@@ -187,12 +191,55 @@ pub async fn clean_items(app: AppHandle, ids: Vec<String>) -> Result<CleanOutcom
 #[tauri::command]
 pub async fn clean_empty_trash(app: AppHandle) -> Result<CleanOutcome, ErrorDto> {
     tauri::async_runtime::spawn_blocking(move || {
-        run_clean(&app, |item| {
-            item.category == CleanCategory::Trash && item.method == CleanMethod::EmptyTrash
-        })
+        run_clean(
+            &app,
+            |item| item.category == CleanCategory::Trash && item.method == CleanMethod::EmptyTrash,
+            "user",
+        )
     })
     .await
     .map_err(|e| error("clean", &e.to_string()))?
+}
+
+// ---------- Firemní správa ----------
+
+/// Sken pro firemní správu (bez událostí průběhu). Když právě běží sken
+/// z okna, počká na jeho konec (nejvýš 10 minut).
+pub(crate) fn fleet_scan(app: &AppHandle) -> Result<CleanScan, ErrorDto> {
+    let state = app.state::<AppState>();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    while state.care.scanning.swap(true, Ordering::SeqCst) {
+        if std::time::Instant::now() > deadline {
+            return Err(error("clean_running", "a cleanup scan is already running"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    let _running = Running(&state.care.scanning);
+    let never = AtomicBool::new(false);
+    let ctx = context(home()?);
+    let scan = cleanup::scan(&ctx, &never, |_| {});
+    *lock(&state.care.scan) = Some(scan.clone());
+    Ok(scan)
+}
+
+/// Uklidí položky posledního skenu podle identifikátorů (výběr dělá firemní
+/// správa jen z bezpečných položek; Koš se nikdy nevysypává).
+pub(crate) fn fleet_clean(app: &AppHandle, ids: &[String]) -> Result<CleanOutcome, ErrorDto> {
+    run_clean(
+        app,
+        |item| item.method != CleanMethod::EmptyTrash && ids.contains(&item.id),
+        "fleet",
+    )
+}
+
+/// Poslední sken (pro odhad, kolik jde uklidit).
+pub(crate) fn last_clean_scan(app: &AppHandle) -> Option<CleanScan> {
+    lock(&app.state::<AppState>().care.scan).clone()
+}
+
+/// Probíhá právě sken z okna?
+pub(crate) fn clean_scan_running(app: &AppHandle) -> bool {
+    app.state::<AppState>().care.scanning.load(Ordering::SeqCst)
 }
 
 // ---------- Zrychlení ----------

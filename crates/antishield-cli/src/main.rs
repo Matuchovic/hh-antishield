@@ -72,6 +72,27 @@ enum Command {
         #[command(subcommand)]
         command: AuditCommand,
     },
+    /// Firemní správa (pro provozovatele schránky).
+    Fleet {
+        #[command(subcommand)]
+        command: FleetCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FleetCommand {
+    /// Vytvoří jednorázový aktivační kód pro založení firmy a příkaz SQL pro schránku.
+    Activation {
+        /// Platnost kódu ve dnech.
+        #[arg(long, default_value_t = 14)]
+        days: u32,
+        /// Poznámka do schránky (komu kód patří).
+        #[arg(long, default_value = "")]
+        note: String,
+        /// Kolikrát jde kód použít (1 pro správce, víc pro živý test v CI).
+        #[arg(long, default_value_t = 1)]
+        uses: u32,
+    },
 }
 
 #[derive(Subcommand)]
@@ -200,6 +221,24 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Rules { command } => rules(command),
+        Command::Fleet {
+            command: FleetCommand::Activation { days, note, uses },
+        } => {
+            use antishield_core::fleet::{ACTIVATION_PREFIX, OneTimeCode};
+            let code = OneTimeCode::generate(ACTIVATION_PREFIX)?;
+            println!("Aktivační kód: {}", code.display());
+            println!("Do schránky (SQL, ukládá se jen otisk kódu):");
+            let note: String = note.chars().filter(|c| !c.is_control()).take(200).collect();
+            println!(
+                "insert into antishield_fleet.activations (code_hash, note, expires_at, uses_left) values \
+                 (decode('{}', 'hex'), '{}', now() + interval '{} days', {});",
+                code.digest_hex(),
+                note.replace('\'', "''"),
+                (*days).clamp(1, 730),
+                (*uses).clamp(1, 100_000)
+            );
+            Ok(ExitCode::SUCCESS)
+        }
         Command::Audit {
             command: AuditCommand::Verify,
         } => {

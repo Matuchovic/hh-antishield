@@ -65,6 +65,9 @@ jobs:
   app:
     name: Aplikace (Linux, kontrola překladu)
     runs-on: ubuntu-latest
+    env:
+      # Jednorázové firmy pro živý test schránky (kód s víc použitími, v tajných proměnných).
+      ANTISHIELD_FLEET_ACTIVATION: ${{ secrets.ANTISHIELD_FLEET_ACTIVATION }}
     steps:
       - uses: actions/checkout@v5
       - run: rustup show active-toolchain || rustup toolchain install
@@ -78,6 +81,13 @@ jobs:
         working-directory: app
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy -p antishield-app --all-targets -- -D warnings
+      - name: Testy aplikace (včetně firemní správy se schránkou v paměti)
+        run: cargo test -p antishield-app
+      - name: Smlouva s živou schránkou (nic nezakládá)
+        run: cargo test -p antishield-app live_relay_contract -- --ignored --nocapture
+      - name: Celá cesta přes živou schránku (firma se na konci smaže)
+        if: env.ANTISHIELD_FLEET_ACTIVATION != ''
+        run: cargo test -p antishield-app live_relay_round_trip -- --ignored --nocapture
       - run: cargo run -p antishield-app -- --self-test
 
   deny:

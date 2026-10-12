@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fleet-leave"
+description = "Enables the fleet_leave command without any pre-configured scope."
+commands.allow = ["fleet_leave"]
+
+[[permission]]
+identifier = "deny-fleet-leave"
+description = "Denies the fleet_leave command without any pre-configured scope."
+commands.deny = ["fleet_leave"]

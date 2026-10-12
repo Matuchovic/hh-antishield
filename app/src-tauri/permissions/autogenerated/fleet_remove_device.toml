@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fleet-remove-device"
+description = "Enables the fleet_remove_device command without any pre-configured scope."
+commands.allow = ["fleet_remove_device"]
+
+[[permission]]
+identifier = "deny-fleet-remove-device"
+description = "Denies the fleet_remove_device command without any pre-configured scope."
+commands.deny = ["fleet_remove_device"]

@@ -360,6 +360,31 @@ fn heavy_processes(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> 
     heavy
 }
 
+/// Disk, paměť a doba běhu bez měření procesoru a procesů (rychlé, pro zprávy
+/// o stavu, které Mac posílá pravidelně).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Vitals {
+    pub disk: Option<DiskInfo>,
+    pub memory: MemoryInfo,
+    pub uptime_secs: u64,
+}
+
+pub fn vitals(home: &Path) -> Vitals {
+    use sysinfo::{RefreshKind, System};
+    let mut system = System::new_with_specifics(RefreshKind::nothing());
+    system.refresh_memory();
+    Vitals {
+        disk: disk_for(home),
+        memory: MemoryInfo {
+            total: system.total_memory(),
+            used: system.used_memory(),
+            swap_used: system.used_swap(),
+            pressure: memory_pressure(),
+        },
+        uptime_secs: System::uptime(),
+    }
+}
+
 /// Změří stav počítače. Trvá asi sekundu (vytížení procesoru se měří mezi dvěma vzorky).
 pub fn measure(home: &Path, disabled_dir: &Path, own_label: &str, own_pid: u32) -> SpeedReport {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};

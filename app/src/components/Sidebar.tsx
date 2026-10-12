@@ -12,6 +12,7 @@ export type Screen =
   | "quarantine"
   | "systemcare"
   | "care"
+  | "fleet"
   | "settings"
   | "about";
 
@@ -29,6 +30,7 @@ const ENTRIES: Entry[] = [
   { id: "quarantine", label: "Karanténa", icon: "box" },
   { id: "systemcare", label: "Bezpečnost systému", icon: "gauge" },
   { id: "care", label: "Čištění a zrychlení", icon: "sparkle" },
+  { id: "fleet", label: "Firemní Macy", icon: "laptop" },
   { id: "events", label: "Události", icon: "clock" },
   { id: "settings", label: "Nastavení", icon: "sliders" },
   { id: "about", label: "O aplikaci", icon: "info" },
@@ -48,6 +50,8 @@ export function Sidebar({
   level,
   scanRunning,
   quarantineCount,
+  fleetAdmin,
+  managedBy,
 }: {
   screen: Screen;
   onNavigate: (screen: Screen) => void;
@@ -55,6 +59,10 @@ export function Sidebar({
   level: ProtectionLevel | null;
   scanRunning: boolean;
   quarantineCount: number;
+  /** Tento Mac spravuje firemní Macy (zobrazí se jejich obrazovka). */
+  fleetAdmin: boolean;
+  /** Firma, která tento Mac spravuje. */
+  managedBy: string | null;
 }) {
   const status = level ? LEVEL[level] : null;
   return (
@@ -68,7 +76,7 @@ export function Sidebar({
 
       <nav aria-label="Hlavní">
         <ul className="nav">
-          {ENTRIES.map((entry) => (
+          {ENTRIES.filter((entry) => entry.id !== "fleet" || fleetAdmin).map((entry) => (
             <li key={entry.id}>
               <button
                 type="button"
@@ -93,6 +101,12 @@ export function Sidebar({
           <span className="dot" aria-hidden="true" />
           {status?.text ?? "Načítám stav…"}
         </p>
+        {managedBy ? (
+          <p className="foot-managed">
+            <Icon name="building" size={14} />
+            Spravuje {managedBy}
+          </p>
+        ) : null}
         <p>Verze {__APP_VERSION__}{info ? `, ${platformName(info.platform)}` : ""}</p>
         <p>
           {info

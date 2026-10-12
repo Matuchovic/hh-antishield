@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fleet-command"
+description = "Enables the fleet_command command without any pre-configured scope."
+commands.allow = ["fleet_command"]
+
+[[permission]]
+identifier = "deny-fleet-command"
+description = "Denies the fleet_command command without any pre-configured scope."
+commands.deny = ["fleet_command"]
