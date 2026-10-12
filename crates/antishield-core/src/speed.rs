@@ -674,7 +674,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let copy = tmp.path().join("busy-tool");
         std::fs::copy(&exe, &copy).unwrap();
-        let mut child = Command::new(&copy).arg("30").spawn().unwrap();
+        // Souběžný test může po fork chvíli držet kopii otevřenou pro zápis
+        // (Linux pak hlásí ETXTBSY); spuštění se zopakuje.
+        let mut child = (0..100)
+            .find_map(|_| match Command::new(&copy).arg("30").spawn() {
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    None
+                }
+                other => Some(other),
+            })
+            .unwrap()
+            .unwrap();
         let exe = exe_of(child.id());
         let outcome = quit_process(&target(child.id(), &exe, None), std::process::id());
         let status = child.wait().unwrap();
