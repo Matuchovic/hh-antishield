@@ -31,6 +31,9 @@ pub struct Executed {
     pub kind: CommandKind,
     /// Poslední zapečetěný výsledek pro správce.
     pub result: Option<String>,
+    /// Výsledek je konečný (příkaz už nic dalšího neudělá).
+    #[serde(default)]
+    pub done: bool,
 }
 
 /// Úklid, který čeká na souhlas uživatele.
@@ -215,6 +218,7 @@ impl MemberState {
                     at_ms: now,
                     kind: command.kind,
                     result: None,
+                    done: false,
                 });
                 Received::New(command)
             }
@@ -254,6 +258,7 @@ impl MemberState {
         let sealed = proto::sign_and_seal(&self.identity(), &self.admin, RESULT, &result)?;
         if let Some(entry) = self.executed.iter_mut().find(|e| e.id == command_id) {
             entry.result = Some(sealed.clone());
+            entry.done = state.is_final();
         }
         Ok(sealed)
     }
@@ -300,6 +305,16 @@ impl MemberState {
             at_ms: now,
         };
         proto::sign_and_seal(&self.identity(), &self.admin, LEAVE, &notice)
+    }
+
+    /// Příkazy, které běžely, když aplikace skončila (ne ty, co čekají na
+    /// souhlas uživatele): po startu se nahlásí jako přerušené.
+    pub fn interrupted(&self) -> Vec<String> {
+        self.executed
+            .iter()
+            .filter(|e| !e.done && !self.approvals.iter().any(|a| a.id == e.id))
+            .map(|e| e.id.clone())
+            .collect()
     }
 
     pub fn add_approval(&mut self, approval: Approval) {

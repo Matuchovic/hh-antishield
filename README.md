@@ -1,6 +1,6 @@
 # H&H AntiShield
 
-Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.6**
+Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.7**
 kontroluje soubory pravidly YARA a otisky (včetně obsahu ZIP a na macOS
 balíčků PKG a obrazů DMG), na pozadí hlídá vybrané složky, nově spuštěné
 programy, položky po přihlášení a přílohy Apple Mail, nálezy izoluje do
@@ -13,7 +13,10 @@ složce zbytečně zabírá místo (mezipaměti, staré protokoly a instalátory
 zbytky po aplikacích, velké staré soubory), a uklidí jen to, co potvrdíte;
 soubory uživatele přesouvá do Koše. Zrychlení změří disk, paměť, procesor
 a dobu běhu, ukáže náročné aplikace (ukončí je jen šetrně, jako ⌘Q)
-a položky po přihlášení vratně vypne. Spouštění programů předem
+a položky po přihlášení vratně vypne. Firemní správa dovolí správci (CTO)
+vidět firemní Macy a na dálku je zkontrolovat, izolovat hrozby a uklidit;
+příkazy jsou podepsané, zprávy šifrované a server mezi nimi je jen schránka
+(podrobnosti v [relay/README.md](relay/README.md)). Spouštění programů předem
 neblokuje a internetovou ochranu zatím nemá; aplikace to otevřeně říká.
 Přesný stav je v [docs/feature-status.md](docs/feature-status.md).
 
@@ -86,7 +89,7 @@ cd app && npm run tauri build                      # balíček; potřebuje TAURI
   Defender); aplikace ochrany systému nikdy nevypíná ani nemění.
 - Testy používají jen neškodné vzorky (EICAR, syntetická data, značky).
   Skutečný malware do repozitáře nepatří.
-- Rozhraní smí volat jen 33 příkazů povolených v
+- Rozhraní smí volat jen 43 příkazů povolených v
   `app/src-tauri/capabilities/default.json`; cesty ke kontrole vybírá nativní
   dialog v backendu a vyčistit jde jen nález, který backend sám vytvořil nebo právě znovu ověřil.
   Čištění a zrychlení stejně: rozhraní posílá jen identifikátory z posledního

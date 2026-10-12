@@ -799,6 +799,21 @@ pub fn start(app: &AppHandle) {
     });
     let member_app = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Příkazy přerušené ukončením aplikace správce uvidí jako nepovedené.
+        let interrupted = lock(&runtime(&member_app).member)
+            .as_ref()
+            .map(MemberState::interrupted)
+            .unwrap_or_default();
+        for id in interrupted {
+            post_result(
+                &member_app,
+                &id,
+                ResultState::Failed,
+                Outcome::default(),
+                Some("interrupted"),
+            )
+            .await;
+        }
         loop {
             let rt = runtime(&member_app);
             let has_member = lock(&rt.member).is_some();

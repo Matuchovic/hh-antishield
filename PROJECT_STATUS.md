@@ -1,8 +1,20 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.6.0)
+Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
 
 ## Stav
+- v0.7.0 (větev `claude/v0.7-fleet`, nevydáno): firemní správa. Správce
+  (CTO) na svém Macu vidí firemní Macy na mapě a v seznamu (ochrana,
+  hrozby, disk, paměť, kolik jde uklidit) a posílá jim podepsané příkazy:
+  kontrola, izolace hrozeb, úklid podle kategorií (i všem najednou).
+  Mezipaměti, protokoly a vývojářské mezipaměti hned, staré instalátory
+  a zbytky aplikací jen po souhlasu uživatele Macu, soubory uživatele a Koš
+  nikdy. Připojení kódem pozvánky; uživatel před připojením vidí, co správce
+  uvidí a smí, a otisk jeho klíče; může se kdykoli odpojit. Schránka na
+  Supabase (projekt Matucha) je jen přepravník šifrovaných zpráv.
+  Schránka je nasazená jen zčásti: funkce, které mažou řádky (stav firmy,
+  vyzvednutí příkazů, odpojení, odebrání Macu), čekají na potvrzení
+  uživatele v Supabase.
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
   (vydání `rules`).
 - v0.2.0 na macOS padá hned po startu: tvrzené prostředí ukončí vlákno
@@ -52,9 +64,14 @@ Aktualizováno: 2026-10-12 (v0.6.0)
   YARA-X v namespacích s licencí), skener se ZIP, karanténa, náprava, hlídání
   složek, procesy a položky po spuštění, stav systému, audit, self-test.
 - `crates/antishield-cli` – `antishield` (scan, selftest, rules build/sign/
-  verify, audit verify).
-- `app/` – Tauri 2 + React; 33 povolených příkazů, přísná CSP, služby na
-  pozadí (hlídání, pravidla po 6 h, plánovač), lišta, single-instance.
+  verify, audit verify, fleet activation).
+- `app/` – Tauri 2 + React; 43 povolených příkazů, přísná CSP, služby na
+  pozadí (hlídání, pravidla po 6 h, plánovač, firemní správa), lišta,
+  single-instance.
+- `crates/antishield-core/src/fleet.rs` – protokol firemní správy (klíče,
+  podpisy, šifrování, kódy, zásady, příkazy, zprávy); `app/src-tauri/src/
+  fleet/` – klient schránky, stav správce a Macu, provedení příkazů;
+  `relay/` – SQL schránky a postup pro aktivační kódy.
 
 ## Rozhodnutí
 - Tauri, jedna aplikace pro macOS a Windows; distribuce mimo App Store.
@@ -117,15 +134,48 @@ Aktualizováno: 2026-10-12 (v0.6.0)
   (`launchctl bootout`/`bootstrap`), vlastní agent nejde vypnout.
 - Hlídání nebezpečného chování programů se do 0.6 nedostalo; aplikace ho
   nikde netvrdí.
+- Firemní správa: schránka je nedůvěryhodná. Příkazy podepisuje Ed25519 klíč
+  správce a šifrují se pro Mac (X25519 + HKDF-SHA256 + ChaCha20-Poly1305,
+  nový klíč pro každou zprávu); zprávy Maců podepisuje klíč Macu a šifrují
+  se pro správce. Klíče se při připojení svazují HMAC jednorázovým kódem
+  pozvánky (120 bitů, schránka zná jen odvozený identifikátor). Mac přijme
+  příkaz jen pro svou firmu a sebe, v platnosti (nejvýš 8 dní, tolerance
+  hodin 10 min), poprvé (pamatuje si 30 dní) a nejvýš 30 za hodinu.
+- Zásady (co hned, co se souhlasem) se pevně uloží při připojení; změna jen
+  novým připojením. Velké soubory a Koš jsou mimo zásady natvrdo v jádru
+  i v aplikaci. Úklid na dálku bere jen předvybrané položky z vlastního
+  čerstvého skenu (běžící aplikace, nedávno použité, cloudové složky ne).
+- Klíče správce i Macu jsou v souborech 0600 (`fleet/admin.json`,
+  `fleet/member.json`). Keychain/Secure Enclave by s ad-hoc podpisem po
+  každé aktualizaci chtěl heslo; po podpisu Developer ID přesunout.
+- Zakládání firem jen s aktivačním kódem (ukládá se SHA-256), aby schránku
+  nemohl použít kdokoli s veřejným klíčem z aplikace.
+- Mac se hlásí každých ~30 s (po příkazu 5 s), správce obnovuje stav každých
+  30 s (po příkazu 3 s); zpráva o stavu každých 15 min a po zásahu, odhad
+  úklidu nejvýš dvakrát denně. Oznámení o zásahu správce se ukáže vždy
+  (i s vypnutými oznámeními) a zásah jde do auditu.
 
 ## Testy (2026-10-12, lokálně)
-- Rust: 111 testů na Linuxu (jádro 88, CLI 2, aplikace 21) + test PKG/DMG
-  jen na macOS, clippy `-D warnings`, rustfmt. Nové: čištění (nález
+- 0.7: jádro 10 testů firemní správy (kódy, vazba klíčů, podvržené klíče,
+  příkazy jen podepsané/pro tento Mac/v platnosti/poprvé/v zásadách,
+  soubory uživatele a Koš nikdy, šifrování proti úpravám a záměně druhu
+  zprávy, výběr bezpečných položek úklidu, soubory 0600). Aplikace: celá
+  cesta správce ↔ Mac přes schránku v paměti (pozvánka, připojení, zpráva,
+  úklid se souhlasem, opakované doručení, starší zpráva, odpojení,
+  odebrání, podvržený příkaz/klíče/výsledek, zahlcení, vypršení souhlasu),
+  tvar JSON ze SQL. UI: 32 testů vitest (+6 firemní správa). Schránka:
+  samotest v SQL jako `anon` (neplatná/jednorázová aktivace a pozvánka,
+  cizí tokeny, platnost nad 8 dní, žádný přímý přístup k tabulkám),
+  vše vráceno. Obrazovky v Chromiu s náhradou IPC bez chyb v konzoli.
+  Živý test proti schránce (`live_relay_contract`, `live_relay_round_trip`)
+  čeká na dokončení schránky.
+- Rust: 128 testů na Linuxu (jádro 98, CLI 2, aplikace 28; 2 živé testy
+  schránky se spouští zvlášť) + test PKG/DMG jen na macOS, clippy
+  `-D warnings`, rustfmt. Nové: čištění (nález
   a úklid, podvržená/přesunutá položka, odkazy, zbytky aplikací, právě
   používaná mezipaměť, složky synchronizované s cloudem), zrychlení (měření, vratné položky po přihlášení,
   SIGTERM s ověřením konce, odmítnutí systémových programů a sebe).
-- UI: 26 testů vitest (+ čištění a zrychlení: výběr, Koš zvlášť, kategorie,
-  překlady, prahy disku a paměti, doporučení, doba běhu), typecheck, build.
+- UI: 32 testů vitest (čištění a zrychlení, firemní správa), typecheck, build.
 - 0.6: CI zelené (Linux, macOS, Windows), build-only Release (DMG
   s self-testem v podepsaném balíčku, instalátor Windows) zelený.
 - 0.6: obrazovka Čištění a zrychlení v Chromiu s náhradou IPC (hledání
@@ -165,6 +215,12 @@ Aktualizováno: 2026-10-12 (v0.6.0)
   macOS po aktualizaci obvykle zapomene udělená oprávnění (plný přístup,
   složky); žádost o přístup proto radí přepínač vypnout a zapnout.
 - Architektonický dokument (Claude Docs) ještě popisuje nativní variantu.
+- Schránka firemní správy je nasazená bez funkcí, které mažou řádky
+  (`antishield_fleet_admin_state`, `_poll`, `_leave`, `_admin_remove_device`,
+  `_admin_delete_fleet`, `_admin_revoke_invite`): Supabase MCP je spustí jen
+  s potvrzením uživatele. Do té doby firemní správa nefunguje.
+- Tajnou proměnnou `ANTISHIELD_FLEET_ACTIVATION` (živý test v CI) z cloudu
+  nastavit nejde; nastaví uživatel.
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 
@@ -174,7 +230,8 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Sloučit PR #10 s 0.6.0 → Release (publish) → na Macu: Čištění (najít, projít
-položky, vyčistit, ověřit instalátory v Koši), Zrychlení (ukončit aplikaci:
-macOS se poprvé zeptá na ovládání; vypnout a zase zapnout položku po
-přihlášení), plynulost plátna.
+Uživatel potvrdí zbytek schránky (nebo spustí `relay/migrations/0001…sql`
+v SQL editoru Supabase) → živý test schránky v CI → aktivační kód pro
+správce → PR a Release 0.7.0 → na Macu správce: založit firmu, pozvat Mac,
+na firemním Macu připojit, poslat úklid a kontrolu, souhlas s instalátory,
+odpojení.

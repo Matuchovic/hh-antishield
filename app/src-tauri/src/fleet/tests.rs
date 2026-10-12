@@ -882,3 +882,163 @@ async fn futures_catch<F: std::future::Future<Output = ()>>(
     })
     .await
 }
+
+#[test]
+fn relay_state_json_from_sql_is_understood() {
+    // Stejný tvar, jaký skládá `antishield_fleet_admin_state` (jsonb_build_object).
+    let json = r#"{
+        "nowMs": 1800000000000,
+        "devices": [{
+            "id": "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
+            "bundle": "{\"p\":\"x\",\"m\":\"y\"}",
+            "inviteTokenId": "abcdefghijklmnopqrstuv",
+            "report": null,
+            "reportAtMs": null,
+            "lastSeenMs": 1799999990000,
+            "leftNotice": null,
+            "createdAtMs": 1799999000000
+        }],
+        "commands": [{
+            "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+            "deviceId": "1b4e28ba-2fa1-41d2-883f-0016d3cca427",
+            "createdAtMs": 1799999995000,
+            "expiresAtMs": 1800604800000,
+            "deliveredAtMs": null,
+            "result": null,
+            "resultAtMs": null
+        }],
+        "invites": [{"tokenId": "abc", "expiresAtMs": 1, "usedAtMs": null, "deviceId": null}]
+    }"#;
+    let state: RelayState = serde_json::from_str(json).unwrap();
+    assert_eq!(state.now_ms, NOW);
+    assert_eq!(state.devices[0].last_seen_ms, Some(1_799_999_990_000));
+    assert!(state.devices[0].report.is_none());
+    assert_eq!(state.commands[0].delivered_at_ms, None);
+    // Řádky z `antishield_fleet_poll` a `antishield_fleet_invite`.
+    let rows: Vec<CommandRow> = serde_json::from_str(
+        r#"[{"id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "envelope": "AQ"}]"#,
+    )
+    .unwrap();
+    assert_eq!(rows[0].envelope, "AQ");
+    let invites: Vec<InviteRow> =
+        serde_json::from_str(r#"[{"bundle": "b", "expires_at_ms": 1800000000000}]"#).unwrap();
+    assert_eq!(invites[0].bundle, "b");
+}
+
+/// Smlouva se skutečnou schránkou bez zakládání dat: každá funkce se zavolá
+/// s neplatnými údaji a musí odpovědět svým kódem odmítnutí. Odhalí špatné
+/// názvy parametrů (PostgREST by funkci nenašel) i špatné zpracování chyb.
+#[test]
+#[ignore = "needs the live relay"]
+fn live_relay_contract() {
+    use super::relay::RelayError::Rejected;
+    tauri::async_runtime::block_on(async {
+        let relay = super::relay::Relay::new().unwrap();
+        let id = || antishield_core::fleet::random_id().unwrap();
+        let token = antishield_core::fleet::random_token().unwrap();
+        let soon = crate::state::now_ms() + 24 * 60 * MINUTE;
+        let rejected = |code: &str| Rejected(code.to_string());
+        let bogus = OneTimeCode::generate(ACTIVATION_PREFIX)
+            .unwrap()
+            .canonical();
+        assert_eq!(
+            relay.create(&bogus, &id(), &token).await.unwrap_err(),
+            rejected("fleet_activation_invalid")
+        );
+        assert_eq!(
+            relay
+                .admin_invite(&id(), &token, "abcdefghijklmnopqrstuv", "b", soon)
+                .await
+                .unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay.admin_state(&id(), &token).await.unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay
+                .admin_command(&id(), &token, &id(), &id(), "e", soon)
+                .await
+                .unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay
+                .admin_remove_device(&id(), &token, &id())
+                .await
+                .unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay.admin_delete_fleet(&id(), &token).await.unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert!(
+            relay
+                .invite("abcdefghijklmnopqrstuv")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            relay
+                .enroll("abcdefghijklmnopqrstuv", &id(), &token, "b")
+                .await
+                .unwrap_err(),
+            rejected("fleet_invite_invalid")
+        );
+        assert_eq!(
+            relay.poll(&id(), &token).await.unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay.report(&id(), &token, "r").await.unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay.result(&id(), &token, &id(), "r").await.unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+        assert_eq!(
+            relay.leave(&id(), &token, "n").await.unwrap_err(),
+            rejected("fleet_not_authorized")
+        );
+    });
+}
+
+#[test]
+fn commands_cut_off_by_a_restart_are_reported_as_failed() {
+    let mut world = World::new();
+    let mut ondrej = world.enroll("Ondřej Veselý");
+    let device = ondrej.device_id.clone();
+    let scan = world.send(&device, CommandKind::Scan, &[]);
+    let cleanup = world.send(&device, CommandKind::Cleanup, &[CleanCategory::Installers]);
+    let rows = world.relay.poll(&device, &ondrej.device_token).unwrap();
+    for row in &rows {
+        assert!(matches!(
+            ondrej.receive(&row.id, &row.envelope, NOW),
+            Received::New(_)
+        ));
+    }
+    world.post(&mut ondrej, &scan, ResultState::Running, Outcome::default());
+    world.post(
+        &mut ondrej,
+        &cleanup,
+        ResultState::AwaitingConsent,
+        Outcome::default(),
+    );
+    ondrej.add_approval(super::member::Approval {
+        id: cleanup.clone(),
+        categories: vec![CleanCategory::Installers],
+        bytes: 1,
+        requested_at_ms: NOW,
+        expires_at_ms: NOW + MINUTE,
+        freed_bytes: 0,
+        trashed_bytes: 0,
+    });
+    // Kontrola běžela, když aplikace skončila; úklid čeká na souhlas.
+    assert_eq!(ondrej.interrupted(), vec![scan.clone()]);
+    world.post(&mut ondrej, &scan, ResultState::Failed, Outcome::default());
+    assert!(ondrej.interrupted().is_empty());
+}

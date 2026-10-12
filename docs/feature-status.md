@@ -1,4 +1,4 @@
-# Stav funkcí – v0.6
+# Stav funkcí – v0.7
 
 Platí pravidlo: aplikace nikdy netvrdí ochranu, kterou nemá. V0.2 hlásí
 „Váš Mac je hlídaný“, jen když skutečně běží hlídání složek i ověřené
@@ -50,6 +50,7 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 | Bezpečnost systému (Gatekeeper, SIP, FileVault, firewall, XProtect; na Windows Defender a firewall) | jen čte stav a radí, nic nemění; přeloženo v CI, chybí ověření na zařízení |
 | Oznámení, ikona v liště, spuštění po přihlášení | přeloženo v CI pro macOS i Windows; chybí ruční test |
 | Animace a plynulost | animují se jen transformace a průhlednost, bez rozmazání v pohyblivých vrstvách; ověřeno v Chromiu (jádro WebView2) a WebKitGTK, na Macu ověří uživatel |
+| Firemní správa: správce vidí firemní Macy (ochrana, hrozby, disk, paměť, kolik jde uklidit) a posílá podepsané příkazy (kontrola, izolace hrozeb, úklid podle kategorií); Macy připojené kódem pozvánky, souhlas uživatele u instalátorů a zbytků, soubory uživatele a Koš nikdy | implementováno, testy protokolu se schránkou v paměti a samotest schránky v SQL; schránka na serveru nasazená zčásti (funkce s mazáním čekají na potvrzení); na skutečných Macích neověřeno |
 | Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené |
 | Archivy RAR, 7z, gzip a vnořené archivy | rozpoznají se a započítají jako „nerozbalené“ (DMG a PKG se na macOS kontrolují) |
 | App Sandbox na macOS | vypnutý kvůli aktualizacím (sandboxovaná aplikace nesmí přepsat sama sebe); tvrzené prostředí zapnuté s výjimkou pro kód YARA-X překládaný za běhu |
