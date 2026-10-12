@@ -1,9 +1,10 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.8.0 vydána, 0.8.1 připravena v PR)
+Aktualizováno: 2026-10-12 (v0.8.1 vydána)
 
 ## Stav
-- v0.8.1 (větev `claude/v0.8.1-compat`, zatím nevydaná): smíšené verze.
+- v0.8.1 vydána 12. 10. 2026 (PR #14, Release se všemi balíčky
+  a `latest.json`): smíšené verze.
   Mac s 0.8 a základními zásadami posílá zprávu ve tvaru z 0.7 (správce
   s 0.7 neznámá pole odmítá a stav Macu by mu zamrzl). Správce s 0.8
   nenabídne rozšířenou správu Macu se starším AntiShieldem (žádost by
@@ -209,7 +210,8 @@ Aktualizováno: 2026-10-12 (v0.8.0 vydána, 0.8.1 připravena v PR)
   (i s vypnutými oznámeními) a zásah jde do auditu.
 
 ## Testy (2026-10-12, lokálně)
-- 0.8.1: aplikace 35 testů (nový: zpráva Macu se základními zásadami má
+- 0.8.1: CI v PR #14 zelené (Linux, macOS, Windows), Release zelený.
+  Aplikace 35 testů (nový: zpráva Macu se základními zásadami má
   jen pole z 0.7, s rozšířenou správou nese zásady a hloubkový odhad,
   Macu s 0.7 správce žádost nepošle, po aktualizaci ano), jádro +1 (verze
   s rozšířenou správou), vitest 38, clippy aplikace i jádra bez varování.
@@ -322,6 +324,8 @@ Aktualizováno: 2026-10-12 (v0.8.0 vydána, 0.8.1 připravena v PR)
   základní správa. Správce s 0.8.0 (bez 0.8.1) Macu s 0.7 žádost
   o rozšířenou správu pošle a ten ji odmítne („Nepovedlo se“); stačí Mac
   aktualizovat a požádat znovu.
+- Větev `claude/v0.8-status` (sloučená do PR #14) z cloudu smazat nejde;
+  smaže ji uživatel na GitHubu.
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 
@@ -331,8 +335,7 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Po zeleném CI vydat 0.8.1 (se souhlasem uživatele). Správce i Mac Viktórie
-aktualizovat (banner), správce požádá
+Správce i Mac Viktórie aktualizovat na 0.8.1 (banner), správce požádá
 o rozšířenou správu, uživatelka potvrdí. Pak ověřit detail (hardware,
 zabezpečení, výkon), hloubkovou údržbu, žádost o restart (povolit ovládání
 Finderu) a při dalším vydání aktualizaci na dálku.
