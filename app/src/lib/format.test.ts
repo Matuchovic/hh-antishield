@@ -8,6 +8,7 @@ import {
   displayPath,
   formatBytes,
   formatCount,
+  formatRam,
   headline,
   platformName,
 } from "./format";
@@ -90,6 +91,10 @@ describe("texts", () => {
     expect(formatCount(5, "soubor", "soubory", "souborů")).toBe("5 souborů");
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(1_500_000)).toMatch(/^1,5\sMB$/);
+    // Operační paměť jako v macOS (binárně): Mac s 8 GB nemá „8,6 GB“.
+    expect(formatRam(8 * 2 ** 30)).toBe("8 GB");
+    expect(formatRam(6.23 * 2 ** 30)).toBe("6,2 GB");
+    expect(formatRam(512 * 2 ** 20)).toBe("512 MB");
   });
 
   it("explains update failures with the technical reason", () => {

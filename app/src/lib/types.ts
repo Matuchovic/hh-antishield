@@ -442,6 +442,8 @@ export interface StartupEntry {
 }
 
 export interface SpeedReport {
+  /** Aplikace podle paměti (pro firemní správu). */
+  apps?: HeavyProcess[];
   disk: { total: number; free: number } | null;
   memory: { total: number; used: number; swapUsed: number; pressure: MemoryPressure | null };
   cpu: number;
@@ -458,7 +460,21 @@ export type QuitOutcome = "quit" | "pending";
 // Správce (CTO) vidí firemní Macy a posílá jim podepsané příkazy; Mac je
 // provede jen v mezích, se kterými jeho uživatel souhlasil při připojení.
 
-export type FleetCommandKind = "cleanup" | "scan" | "isolate";
+export type FleetCommandKind =
+  | "cleanup"
+  | "scan"
+  | "isolate"
+  | "restart"
+  | "quitApps"
+  | "update"
+  | "deleteQuarantine"
+  | "policy";
+
+/** Zásahy rozšířené správy (Mac je provede jen po souhlasu uživatele se zásadami). */
+export type FleetAction = "deepClean" | "fullScan" | "quarantineDelete" | "updates" | "restart" | "quitApps";
+
+/** Podrobnosti, které Mac s rozšířenou správou sdílí. */
+export type FleetShare = "hardware" | "security" | "performance" | "threats";
 
 export type FleetCommandState =
   /** Čeká ve schránce, Mac je offline. */
@@ -466,7 +482,7 @@ export type FleetCommandState =
   /** Mac příkaz převzal a ověřil podpis. */
   | "delivered"
   | "running"
-  /** Část úklidu čeká na souhlas uživatele Macu. */
+  /** Část úklidu, restart, aplikace nebo zásady čekají na souhlas uživatele Macu. */
   | "awaitingConsent"
   | "done"
   | "declined"
@@ -487,6 +503,23 @@ export interface FleetCommand {
   files: number;
   threats: number;
   error: string | null;
+  /** Hloubkový úklid, úplná kontrola. */
+  deep: boolean;
+  full: boolean;
+  /** Ukončení aplikací (identifikátory), karanténa (položky). */
+  targets: string[];
+  /** Ukončené či zavřené aplikace, smazané položky karantény. */
+  count: number;
+  /** Nová verze, názvy aplikací. */
+  note: string | null;
+  /** Restart odložený uživatelem do této chvíle. */
+  untilMs: number | null;
+}
+
+export interface FleetCommandOptions {
+  deep?: boolean;
+  full?: boolean;
+  targets?: string[];
 }
 
 export interface FleetThreat {
@@ -495,6 +528,89 @@ export interface FleetThreat {
   path: string;
   detectedAtMs: number;
   quarantined: boolean;
+}
+
+export interface FleetBattery {
+  cycles: number;
+  /** Kapacita proti nové baterii v %. */
+  healthPct: number | null;
+  service: boolean;
+  chargePct: number | null;
+  charging: boolean;
+  onPower: boolean;
+}
+
+export interface FleetHardware {
+  chip: string;
+  modelId: string;
+  serial: string | null;
+  cores: number;
+  performanceCores: number | null;
+  efficiencyCores: number | null;
+  memory: number;
+  battery: FleetBattery | null;
+}
+
+export interface FleetOsUpdate {
+  title: string;
+  version: string | null;
+  restart: boolean;
+  recommended: boolean;
+}
+
+export interface FleetSecurity {
+  filevault: boolean | null;
+  firewall: boolean | null;
+  stealth: boolean | null;
+  sip: boolean | null;
+  gatekeeper: boolean | null;
+  xprotect: string | null;
+  autoUpdates: boolean | null;
+  osUpdates: FleetOsUpdate[] | null;
+  backup: { configured: boolean; auto: boolean | null; lastMs: number | null } | null;
+  fullDiskAccess: boolean | null;
+}
+
+export interface FleetAppUsage {
+  name: string;
+  bundleId: string | null;
+  /** Podíl celého procesoru v promile. */
+  cpuPermille: number;
+  memory: number;
+  processes: number;
+}
+
+export interface FleetLoginItem {
+  label: string;
+  program: string | null;
+  enabled: boolean;
+  system: boolean;
+  running: boolean;
+}
+
+export interface FleetPerformance {
+  measuredAtMs: number;
+  cpuPermille: number;
+  cores: number;
+  swapUsed: number;
+  apps: FleetAppUsage[];
+  loginItems: FleetLoginItem[];
+}
+
+export interface FleetQuarantineItem {
+  id: string;
+  path: string;
+  ruleName: string;
+  severity: Severity;
+  atMs: number;
+  size: number;
+  sha256: string;
+}
+
+export interface FleetEvent {
+  kind: string;
+  atMs: number;
+  data: Record<string, unknown>;
 }
 
 /** Šifrovaná zpráva z Macu, ověřená podpisem jeho klíče. */
@@ -516,7 +632,18 @@ export interface FleetReport {
   memory: { total: number; used: number; pressure: MemoryPressure | null };
   uptimeSecs: number;
   /** Kolik jde uklidit, jen velikosti po kategoriích (žádné názvy souborů). */
-  cleanup: { measuredAtMs: number; categories: { category: CleanCategory; bytes: number }[] } | null;
+  cleanup: {
+    measuredAtMs: number;
+    categories: { category: CleanCategory; bytes: number; items?: number }[];
+    deep?: { nowBytes: number; appsBytes: number; apps: number };
+  } | null;
+  /** Zásady, se kterými uživatel souhlasil (Mac 0.7 je neposílá). */
+  policy?: FleetPolicy;
+  hardware?: FleetHardware;
+  security?: FleetSecurity;
+  performance?: FleetPerformance;
+  quarantine?: FleetQuarantineItem[];
+  events?: FleetEvent[];
 }
 
 export interface FleetDevice {
@@ -529,6 +656,8 @@ export interface FleetDevice {
   lastSeenMs: number | null;
   /** Uživatel Mac od firmy odpojil. */
   left: boolean;
+  /** Zásady, se kterými uživatel Macu souhlasil. */
+  policy: FleetPolicy;
   report: FleetReport | null;
   /** Poslední příkazy, nejnovější první. */
   commands: FleetCommand[];
@@ -547,24 +676,54 @@ export interface FleetPolicy {
   auto: CleanCategory[];
   /** Jen po souhlasu uživatele Macu. Ostatní kategorie nikdy na dálku. */
   consent: CleanCategory[];
+  /** Rozšířená správa: zásahy a sdílené podrobnosti. */
+  actions?: FleetAction[];
+  share?: FleetShare[];
 }
 
 export interface FleetAdmin {
   fleetName: string;
   adminName: string;
   fingerprint: string;
+  /** Zásady, které firma nabízí novým Macům. */
   policy: FleetPolicy;
   devices: FleetDevice[];
   invites: FleetInvite[];
   relay: { reachable: boolean; checkedAtMs: number | null; error: string | null };
 }
 
+export type FleetApprovalKind = "cleanup" | "restart" | "quitApps" | "policy";
+
 export interface FleetApproval {
   id: string;
+  kind: FleetApprovalKind;
   categories: CleanCategory[];
   bytes: number;
   requestedAtMs: number;
   expiresAtMs: number;
+  /** Aplikace k zavření (hloubkový úklid) nebo k ukončení. */
+  apps: { id: string; name: string; bytes: number }[];
+  /** Nabízené zásady. */
+  policy: FleetPolicy | null;
+  /** Odložený restart. */
+  snoozedUntilMs: number | null;
+}
+
+export interface FleetApprovalDetails {
+  categories: {
+    category: CleanCategory;
+    bytes: number;
+    files: number;
+    items: { id: string; name: string; path: string; bytes: number; modifiedMs: number | null }[];
+  }[];
+  uptimeSecs: number;
+}
+
+export interface FleetApprovalChoice {
+  categories?: CleanCategory[];
+  items?: string[];
+  apps?: string[];
+  snoozeMinutes?: number;
 }
 
 export interface FleetMembership {

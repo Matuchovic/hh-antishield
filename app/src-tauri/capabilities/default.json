@@ -50,6 +50,7 @@
     "allow-fleet-join-preview",
     "allow-fleet-join",
     "allow-fleet-leave",
-    "allow-fleet-approve"
+    "allow-fleet-approve",
+    "allow-fleet-approval-details"
   ]
 }

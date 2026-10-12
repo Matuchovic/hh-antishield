@@ -6,8 +6,7 @@ use antishield_core::cleanup::CleanCategory;
 use antishield_core::fleet::{
     self as proto, ADMIN_BUNDLE, AdminBundle, COMMAND, COMMAND_LIFETIME_MS, Command, CommandKind,
     CommandResult, DEVICE_BUNDLE, DeviceBundle, FleetError, INVITE_LIFETIME_MS, INVITE_PREFIX,
-    Identity, IdentitySecret, NEVER_REMOTE, OneTimeCode, Policy, PublicKeys, Report, ResultState,
-    VERSION,
+    Identity, IdentitySecret, OneTimeCode, Policy, PublicKeys, Report, ResultState, VERSION,
 };
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +58,24 @@ pub struct AdminCommand {
     pub expires_at_ms: u64,
     pub delivered_at_ms: Option<u64>,
     pub result: Option<CommandResult>,
+    #[serde(default)]
+    pub deep: bool,
+    #[serde(default)]
+    pub full: bool,
+    #[serde(default)]
+    pub targets: Vec<String>,
+}
+
+/// Volby příkazu z rozhraní (hloubkový úklid, úplná kontrola, cíle).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandOptions {
+    #[serde(default)]
+    pub deep: bool,
+    #[serde(default)]
+    pub full: bool,
+    #[serde(default)]
+    pub targets: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -129,6 +146,12 @@ fn command_view(command: &AdminCommand, now: u64) -> CommandView {
         files: result.map_or(0, |r| r.files),
         threats: result.map_or(0, |r| r.threats),
         error: result.and_then(|r| r.error.clone()),
+        deep: command.deep,
+        full: command.full,
+        targets: command.targets.clone(),
+        count: result.map_or(0, |r| r.count),
+        note: result.and_then(|r| r.note.clone()),
+        until_ms: result.and_then(|r| r.until_ms),
     }
 }
 
@@ -188,13 +211,24 @@ impl AdminState {
         ))
     }
 
+    /// Firma z verze 0.7 nabízela jen základní zásady: nové pozvánky
+    /// a nabídky ponesou rozšířenou správu. Vrací, jestli se něco změnilo.
+    pub fn upgrade_policy(&mut self) -> bool {
+        if self.policy.covers(&Policy::standard()) {
+            return false;
+        }
+        self.policy = Policy::standard();
+        true
+    }
+
     /// Podepsaný příkaz zašifrovaný pro jeden Mac. Kontroluje stejné meze
-    /// jako Mac (ten je ale ověří znovu sám).
+    /// jako Mac (zásady, které Mac potvrdil); Mac je ale ověří znovu sám.
     pub fn command(
         &self,
         device_id: &str,
         kind: CommandKind,
         categories: &[CleanCategory],
+        options: &CommandOptions,
         now: u64,
     ) -> Result<(AdminCommand, String), FleetError> {
         let device = self
@@ -205,38 +239,26 @@ impl AdminState {
         if device.removing.is_some() {
             return Err(FleetError::WrongTarget);
         }
-        match kind {
-            CommandKind::Cleanup => {
-                if categories.is_empty() {
-                    return Err(FleetError::NotAllowed("no category".into()));
-                }
-                for (i, category) in categories.iter().enumerate() {
-                    let allowed = self.policy.auto.contains(category)
-                        || self.policy.consent.contains(category);
-                    if !allowed
-                        || NEVER_REMOTE.contains(category)
-                        || categories[..i].contains(category)
-                    {
-                        return Err(FleetError::NotAllowed(format!("{category:?}")));
-                    }
-                }
-            }
-            CommandKind::Scan | CommandKind::Isolate | CommandKind::Unenroll => {
-                if !categories.is_empty() {
-                    return Err(FleetError::NotAllowed("categories".into()));
-                }
-            }
-        }
-        let command = Command {
-            v: VERSION,
-            id: proto::random_id()?,
-            fleet_id: self.fleet_id.clone(),
-            device_id: device.id.clone(),
+        let mut command = Command::new(
+            proto::random_id()?,
+            self.fleet_id.clone(),
+            device.id.clone(),
             kind,
-            categories: categories.to_vec(),
-            issued_at_ms: now,
-            expires_at_ms: now + COMMAND_LIFETIME_MS,
-        };
+            categories.to_vec(),
+            now,
+            now + COMMAND_LIFETIME_MS,
+        );
+        command.deep = options.deep;
+        command.full = options.full;
+        command.targets = options.targets.clone();
+        if kind == CommandKind::Policy {
+            command.policy = Some(self.policy.clone());
+        }
+        let accepted = device
+            .report
+            .as_ref()
+            .map_or_else(Policy::basic, Report::accepted_policy);
+        proto::check_command(&command, &accepted)?;
         let sealed = proto::sign_and_seal(&self.identity(), &device.keys, COMMAND, &command)?;
         Ok((
             AdminCommand {
@@ -248,6 +270,9 @@ impl AdminState {
                 expires_at_ms: command.expires_at_ms,
                 delivered_at_ms: None,
                 result: None,
+                deep: command.deep,
+                full: command.full,
+                targets: command.targets,
             },
             sealed,
         ))
@@ -394,6 +419,10 @@ impl AdminState {
                     joined_at_ms: d.joined_at_ms,
                     last_seen_ms: d.last_seen_ms,
                     left: d.left_at_ms.is_some() || d.gone,
+                    policy: d
+                        .report
+                        .as_ref()
+                        .map_or_else(Policy::basic, Report::accepted_policy),
                     report: d.report.clone(),
                     commands: self
                         .commands

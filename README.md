@@ -1,6 +1,6 @@
 # H&H AntiShield
 
-Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.7**
+Desktopová aplikace pro macOS a Windows (Tauri 2 + Rust). Verze **0.8**
 kontroluje soubory pravidly YARA a otisky (včetně obsahu ZIP a na macOS
 balíčků PKG a obrazů DMG), na pozadí hlídá vybrané složky, nově spuštěné
 programy, položky po přihlášení a přílohy Apple Mail, nálezy izoluje do
@@ -14,7 +14,10 @@ zbytky po aplikacích, velké staré soubory), a uklidí jen to, co potvrdíte;
 soubory uživatele přesouvá do Koše. Zrychlení změří disk, paměť, procesor
 a dobu běhu, ukáže náročné aplikace (ukončí je jen šetrně, jako ⌘Q)
 a položky po přihlášení vratně vypne. Firemní správa dovolí správci (CTO)
-vidět firemní Macy a na dálku je zkontrolovat, izolovat hrozby a uklidit;
+vidět firemní Macy a na dálku je zkontrolovat, izolovat hrozby a uklidit.
+S rozšířenou správou, kterou musí potvrdit uživatel Macu, vidí i stav
+zabezpečení, výkon, hardware a baterii a může spustit hloubkovou údržbu,
+požádat o restart, navrhnout ukončení aplikací nebo Mac aktualizovat;
 příkazy jsou podepsané, zprávy šifrované a server mezi nimi je jen schránka
 (podrobnosti v [relay/README.md](relay/README.md)). Spouštění programů předem
 neblokuje a internetovou ochranu zatím nemá; aplikace to otevřeně říká.

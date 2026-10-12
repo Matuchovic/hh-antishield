@@ -30,10 +30,13 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::{AppState, now_ms};
-use admin::AdminState;
+use admin::{AdminState, CommandOptions};
 use member::{Invitation, MemberState, Outcome, Received};
 use relay::{Relay, RelayError};
-use view::{AdminView, FleetStateView, InviteView, JoinPreview, MemberView, RelayStatus};
+use view::{
+    AdminView, ApprovalCategoryView, ApprovalDetails, ApprovalItemView, FleetStateView, InviteView,
+    JoinPreview, MemberView, RelayStatus,
+};
 
 const FLEET_DIR: &str = "fleet";
 const ADMIN_FILE: &str = "admin.json";
@@ -113,9 +116,16 @@ impl std::fmt::Debug for FleetRuntime {
 impl FleetRuntime {
     pub fn load(data_dir: &Path) -> Self {
         let dir = data_dir.join(FLEET_DIR);
-        let admin = read_json::<AdminState>(&dir.join(ADMIN_FILE), MAX_STATE_BYTES)
+        let mut admin = read_json::<AdminState>(&dir.join(ADMIN_FILE), MAX_STATE_BYTES)
             .ok()
             .flatten();
+        // Firma z verze 0.7: nové pozvánky a nabídky ponesou rozšířenou správu.
+        if let Some(state) = admin.as_mut()
+            && state.upgrade_policy()
+            && let Ok(bytes) = serde_json::to_vec(&*state)
+        {
+            let _ = write_private(&dir.join(ADMIN_FILE), &bytes);
+        }
         let member = read_json::<MemberState>(&dir.join(MEMBER_FILE), MAX_STATE_BYTES)
             .ok()
             .flatten();
@@ -208,10 +218,22 @@ impl FleetRuntime {
                 .iter()
                 .map(|a| view::ApprovalView {
                     id: a.id.clone(),
+                    kind: a.kind,
                     categories: a.categories.clone(),
                     bytes: a.bytes,
                     requested_at_ms: a.requested_at_ms,
                     expires_at_ms: a.expires_at_ms,
+                    apps: a
+                        .apps
+                        .iter()
+                        .map(|app| view::ApprovalAppView {
+                            id: app.id.clone(),
+                            name: app.name.clone(),
+                            bytes: app.bytes,
+                        })
+                        .collect(),
+                    policy: a.policy.clone(),
+                    snoozed_until_ms: a.snoozed_until_ms,
                 })
                 .collect(),
             problem: lock(&self.member_problem).clone(),
@@ -409,14 +431,16 @@ pub async fn fleet_command(
     device_ids: Vec<String>,
     kind: CommandKind,
     categories: Vec<CleanCategory>,
+    options: Option<CommandOptions>,
 ) -> Result<AdminView, ErrorDto> {
     if kind == CommandKind::Unenroll {
         return Err(app_error("fleet_not_allowed", "use the remove command"));
     }
+    let options = options.unwrap_or_default();
     let mut first_error = None;
     let mut sent = 0;
     for device in device_ids.iter().take(200) {
-        match send_command(&app, device, kind, &categories).await {
+        match send_command(&app, device, kind, &categories, &options).await {
             Ok(()) => sent += 1,
             Err(err) => {
                 first_error.get_or_insert(err);
@@ -440,6 +464,7 @@ async fn send_command(
     device: &str,
     kind: CommandKind,
     categories: &[CleanCategory],
+    options: &CommandOptions,
 ) -> Result<(), ErrorDto> {
     let rt = runtime(app);
     let (fleet, token, command, sealed) = {
@@ -448,7 +473,7 @@ async fn send_command(
             .as_ref()
             .ok_or_else(|| app_error("fleet_no_admin", "this Mac does not manage a fleet"))?;
         let (command, sealed) = admin
-            .command(device, kind, categories, now_ms())
+            .command(device, kind, categories, options, now_ms())
             .map_err(|e| fleet_error(&e))?;
         (
             admin.fleet_id.clone(),
@@ -471,7 +496,15 @@ async fn send_command(
     audit(
         app,
         "fleet_command_sent",
-        json!({ "deviceId": device, "commandId": command.id, "kind": kind, "categories": categories }),
+        json!({
+            "deviceId": device,
+            "commandId": command.id,
+            "kind": kind,
+            "categories": categories,
+            "deep": options.deep,
+            "full": options.full,
+            "targets": options.targets.len(),
+        }),
     );
     rt.update_admin(|a| a.record_command(command))?;
     Ok(())
@@ -488,7 +521,14 @@ pub async fn fleet_remove_device(app: AppHandle, id: String) -> Result<AdminView
             .any(|d| d.id == id && d.left_at_ms.is_none() && !d.gone && d.removing.is_none())
     });
     if active {
-        send_command(&app, &id, CommandKind::Unenroll, &[]).await?;
+        send_command(
+            &app,
+            &id,
+            CommandKind::Unenroll,
+            &[],
+            &CommandOptions::default(),
+        )
+        .await?;
     } else {
         let (fleet, token) = lock(&rt.admin)
             .as_ref()
@@ -617,21 +657,76 @@ pub async fn fleet_leave(app: AppHandle) -> Result<(), ErrorDto> {
     Ok(())
 }
 
-/// Uživatel rozhodl o úklidu, který navrhl správce.
+/// Uživatel rozhodl o žádosti správce (úklid, restart, aplikace, zásady).
+/// Bez výběru platí celá žádost; restart jde odložit.
 #[tauri::command]
 pub async fn fleet_approve(
     app: AppHandle,
     id: String,
     approve: bool,
+    choice: Option<exec::Choice>,
 ) -> Result<MemberView, ErrorDto> {
     let rt = runtime(&app);
     let approval = rt
         .update_member(|m| m.take_approval(&id))?
         .flatten()
         .ok_or_else(|| app_error("fleet_unknown_approval", "the request is no longer pending"))?;
-    exec::decide(&app, approval, approve).await;
+    exec::decide(&app, approval, approve, choice.unwrap_or_default()).await;
     rt.emit_if_changed(&app);
     rt.member_view_now()
+}
+
+/// Co přesně žádost o úklid obsahuje na tomto Macu: velikosti kategorií,
+/// velké soubory k výběru a obsah Koše. Jen pro uživatele tohoto Macu.
+#[tauri::command]
+pub fn fleet_approval_details(app: AppHandle, id: String) -> Result<ApprovalDetails, ErrorDto> {
+    let rt = runtime(&app);
+    let approval = lock(&rt.member)
+        .as_ref()
+        .and_then(|m| m.approvals.iter().find(|a| a.id == id).cloned())
+        .ok_or_else(|| app_error("fleet_unknown_approval", "the request is no longer pending"))?;
+    let scan = crate::care::last_clean_scan(&app).unwrap_or_default();
+    let categories = approval
+        .categories
+        .iter()
+        .map(|category| {
+            let items: Vec<_> = scan
+                .items
+                .iter()
+                .filter(|i| i.category == *category)
+                .collect();
+            let user_picks = *category == CleanCategory::LargeFiles;
+            ApprovalCategoryView {
+                category: *category,
+                bytes: items
+                    .iter()
+                    .filter(|i| user_picks || *category == CleanCategory::Trash || i.recommended)
+                    .map(|i| i.bytes)
+                    .sum(),
+                files: items.iter().map(|i| i.files).sum(),
+                items: if user_picks {
+                    items
+                        .iter()
+                        .take(100)
+                        .map(|i| ApprovalItemView {
+                            id: i.id.clone(),
+                            name: i.name.clone(),
+                            path: i.path.clone(),
+                            bytes: i.bytes,
+                            modified_ms: i.modified_ms,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            }
+        })
+        .collect();
+    Ok(ApprovalDetails {
+        categories,
+        uptime_secs: antishield_core::system::home_dir()
+            .map_or(0, |home| antishield_core::speed::vitals(&home).uptime_secs),
+    })
 }
 
 /// Pošle výsledek příkazu správci (podepsaný, zašifrovaný).
@@ -684,7 +779,7 @@ async fn member_cycle(app: &AppHandle) {
                         rt.fast(&rt.member_fast_until);
                         let worker = app.clone();
                         tauri::async_runtime::spawn(async move {
-                            exec::run(&worker, command).await;
+                            exec::run(&worker, *command).await;
                         });
                     }
                     Some(Received::Repost(sealed)) => {
@@ -714,6 +809,16 @@ async fn member_cycle(app: &AppHandle) {
         Err(err) => *lock(&rt.member_problem) = Some(err.code()),
     }
 
+    // Odložený restart se znovu připomene.
+    let due = rt
+        .update_member(|m| m.take_due_snoozes(now_ms()))
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if !due.is_empty() {
+        exec::remind(app, &due);
+    }
+
     // Žádosti o souhlas, které vypršely.
     let expired = rt
         .update_member(|m| m.take_expired_approvals(now_ms()))
@@ -721,11 +826,7 @@ async fn member_cycle(app: &AppHandle) {
         .flatten()
         .unwrap_or_default();
     for approval in expired {
-        let outcome = Outcome {
-            freed_bytes: approval.freed_bytes,
-            trashed_bytes: approval.trashed_bytes,
-            ..Outcome::default()
-        };
+        let outcome = Outcome::bytes(approval.freed_bytes, approval.trashed_bytes);
         post_result(app, &approval.id, ResultState::Expired, outcome, None).await;
     }
 

@@ -223,12 +223,26 @@ pub(crate) fn fleet_scan(app: &AppHandle) -> Result<CleanScan, ErrorDto> {
 }
 
 /// Uklidí položky posledního skenu podle identifikátorů (výběr dělá firemní
-/// správa jen z bezpečných položek; Koš se nikdy nevysypává).
+/// správa jen z bezpečných položek; Koš se tu nevysypává).
 pub(crate) fn fleet_clean(app: &AppHandle, ids: &[String]) -> Result<CleanOutcome, ErrorDto> {
     run_clean(
         app,
         |item| item.method != CleanMethod::EmptyTrash && ids.contains(&item.id),
         "fleet",
+    )
+}
+
+/// Uklidí položky, které na žádost správce vybral uživatel tohoto Macu
+/// (i velké soubory do Koše a vysypání Koše, když ho výslovně potvrdil).
+pub(crate) fn fleet_clean_approved(
+    app: &AppHandle,
+    ids: &[String],
+    empty_trash: bool,
+) -> Result<CleanOutcome, ErrorDto> {
+    run_clean(
+        app,
+        |item| ids.contains(&item.id) && (item.method != CleanMethod::EmptyTrash || empty_trash),
+        "fleet-approved",
     )
 }
 
@@ -248,7 +262,7 @@ fn disabled_dir(state: &AppState) -> PathBuf {
     state.data_dir.join(DISABLED_STARTUP_DIR)
 }
 
-fn measure(app: &AppHandle) -> Result<SpeedReport, ErrorDto> {
+pub(crate) fn measure(app: &AppHandle) -> Result<SpeedReport, ErrorDto> {
     let state = app.state::<AppState>();
     let report = speed::measure(
         &home()?,

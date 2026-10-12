@@ -100,7 +100,13 @@ pub struct SpeedReport {
     pub heavy: Vec<HeavyProcess>,
     pub startup: Vec<StartupEntry>,
     pub measured_at_ms: u64,
+    /// Aplikace podle paměti (i nenáročné), pro firemní správu.
+    #[serde(default)]
+    pub apps: Vec<HeavyProcess>,
 }
+
+/// Kolik aplikací měření vrací v přehledu aplikací.
+const MAX_APPS: usize = 12;
 
 /// Jak dopadl požadavek na ukončení.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -271,9 +277,46 @@ struct Group {
     main: Option<(u32, Option<PathBuf>, u64, bool)>,
 }
 
+/// Náročné aplikace a programy, od nejvytíženějšího.
+fn heavy_processes(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> {
+    let mut heavy: Vec<HeavyProcess> = process_groups(system, own_pid)
+        .into_iter()
+        .filter(|g| g.cpu >= HEAVY_CPU_SHARE || g.memory >= HEAVY_MEMORY)
+        .collect();
+    heavy.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory)));
+    heavy.truncate(MAX_HEAVY);
+    heavy
+}
+
+/// Aplikace (s identifikátorem balíčku) podle paměti, nejvýš `limit`.
+fn app_groups(system: &sysinfo::System, own_pid: u32, limit: usize) -> Vec<HeavyProcess> {
+    let mut apps: Vec<HeavyProcess> = process_groups(system, own_pid)
+        .into_iter()
+        .filter(|g| g.bundle_id.is_some())
+        .collect();
+    apps.sort_by(|a, b| b.memory.cmp(&a.memory).then(b.cpu.total_cmp(&a.cpu)));
+    apps.truncate(limit);
+    apps
+}
+
+/// Běžící aplikace (s pomocníky), bez měření procesoru. Rychlé; pro
+/// hloubkový úklid a ukončení aplikací na žádost správce.
+pub fn running_apps(own_pid: u32) -> Vec<HeavyProcess> {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, RefreshKind, System, UpdateKind};
+    let mut system = System::new_with_specifics(RefreshKind::nothing());
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .with_memory()
+            .with_exe(UpdateKind::OnlyIfNotSet),
+    );
+    app_groups(&system, own_pid, usize::MAX)
+}
+
 /// Seskupí procesy: aplikaci macOS s pomocníky podle vnějšího balíčku `.app`,
 /// na Windows procesy stejného programu, jinak každý proces zvlášť.
-fn heavy_processes(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> {
+fn process_groups(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> {
     let share = cores(system);
     let own_exe = std::env::current_exe().ok();
     let own_bundle = own_exe
@@ -335,9 +378,8 @@ fn heavy_processes(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> 
             group.main = Some((pid, exe.clone(), start, direct));
         }
     }
-    let mut heavy: Vec<HeavyProcess> = groups
+    groups
         .into_values()
-        .filter(|g| g.cpu >= HEAVY_CPU_SHARE || g.memory >= HEAVY_MEMORY)
         .filter_map(|g| {
             let (pid, exe, _, _) = g.main?;
             Some(HeavyProcess {
@@ -354,10 +396,7 @@ fn heavy_processes(system: &sysinfo::System, own_pid: u32) -> Vec<HeavyProcess> 
                     .map(|b| b.path.to_string_lossy().into_owned()),
             })
         })
-        .collect();
-    heavy.sort_by(|a, b| b.cpu.total_cmp(&a.cpu).then(b.memory.cmp(&a.memory)));
-    heavy.truncate(MAX_HEAVY);
-    heavy
+        .collect()
 }
 
 /// Disk, paměť a doba běhu bez měření procesoru a procesů (rychlé, pro zprávy
@@ -414,6 +453,7 @@ pub fn measure(home: &Path, disabled_dir: &Path, own_label: &str, own_pid: u32) 
         heavy: heavy_processes(&system, own_pid),
         startup: startup_entries(home, disabled_dir, own_label, &system),
         measured_at_ms: crate::now_ms(),
+        apps: app_groups(&system, own_pid, MAX_APPS),
     }
 }
 

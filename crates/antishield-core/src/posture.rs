@@ -34,7 +34,26 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_OUTPUT: u64 = 64 * 1024;
 
 /// Spustí systémový příkaz (pevná absolutní cesta) s časovým limitem.
-fn run(program: &str, args: &[&str]) -> Option<String> {
+pub(crate) fn run(program: &str, args: &[&str]) -> Option<String> {
+    run_limited(program, args, MAX_OUTPUT)
+}
+
+/// Přečte rouru celou na pozadí (nad limit zahazuje), aby program při
+/// velkém výstupu nečekal na plnou rouru.
+fn drain<R: Read + Send + 'static>(pipe: R, max_output: u64) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut limited = pipe.take(max_output);
+        let mut buf = Vec::new();
+        let _ = limited.read_to_end(&mut buf);
+        let _ = std::io::copy(&mut limited.into_inner(), &mut std::io::sink());
+        let _ = tx.send(buf);
+    });
+    rx
+}
+
+/// Jako `run`, s vlastním limitem velikosti výstupu.
+pub(crate) fn run_limited(program: &str, args: &[&str], max_output: u64) -> Option<String> {
     let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
@@ -42,6 +61,8 @@ fn run(program: &str, args: &[&str]) -> Option<String> {
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
+    let stdout = child.stdout.take().map(|p| drain(p, max_output));
+    let stderr = child.stderr.take().map(|p| drain(p, max_output));
     let started = Instant::now();
     loop {
         match child.try_wait() {
@@ -56,18 +77,14 @@ fn run(program: &str, args: &[&str]) -> Option<String> {
             }
         }
     }
-    let mut text = String::new();
-    child
-        .stdout
-        .take()?
-        .take(MAX_OUTPUT)
-        .read_to_string(&mut text)
-        .ok()?;
-    let mut err = String::new();
-    if let Some(stderr) = child.stderr.take() {
-        let _ = stderr.take(MAX_OUTPUT).read_to_string(&mut err);
-    }
-    text.push_str(&err);
+    // Rouru může držet ještě potomek programu: déle než chvíli se nečeká.
+    let collect = |rx: Option<std::sync::mpsc::Receiver<Vec<u8>>>| {
+        rx.and_then(|rx| rx.recv_timeout(Duration::from_secs(2)).ok())
+    };
+    let mut text = String::from_utf8_lossy(&collect(stdout)?).into_owned();
+    text.push_str(&String::from_utf8_lossy(
+        &collect(stderr).unwrap_or_default(),
+    ));
     Some(text)
 }
 
@@ -87,7 +104,7 @@ fn check(id: &str, title: &str, state: PostureState, detail: &str, advice: &str)
 
 /// Vyhodnotí výstup příkazu podle textů pro „zapnuto“ a „vypnuto“.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
-fn classify(output: Option<&str>, on: &[&str], off: &[&str]) -> PostureState {
+pub(crate) fn classify(output: Option<&str>, on: &[&str], off: &[&str]) -> PostureState {
     let Some(text) = output.map(str::to_ascii_lowercase) else {
         return PostureState::Unknown;
     };
@@ -100,6 +117,21 @@ fn classify(output: Option<&str>, on: &[&str], off: &[&str]) -> PostureState {
     }
 }
 
+/// Verze definic XProtect (vestavěná ochrana macOS).
+#[cfg(target_os = "macos")]
+pub(crate) fn xprotect_version() -> Option<String> {
+    plist::Value::from_file(
+        "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info.plist",
+    )
+    .ok()
+    .and_then(|v| {
+        v.as_dictionary()?
+            .get("CFBundleShortVersionString")?
+            .as_string()
+            .map(str::to_string)
+    })
+}
+
 #[cfg(target_os = "macos")]
 pub fn checks() -> Vec<PostureCheck> {
     let gatekeeper = run("/usr/sbin/spctl", &["--status"]);
@@ -109,16 +141,7 @@ pub fn checks() -> Vec<PostureCheck> {
         "/usr/libexec/ApplicationFirewall/socketfilterfw",
         &["--getglobalstate"],
     );
-    let xprotect = plist::Value::from_file(
-        "/Library/Apple/System/Library/CoreServices/XProtect.bundle/Contents/Info.plist",
-    )
-    .ok()
-    .and_then(|v| {
-        v.as_dictionary()?
-            .get("CFBundleShortVersionString")?
-            .as_string()
-            .map(str::to_string)
-    });
+    let xprotect = xprotect_version();
     vec![
         check(
             "gatekeeper",
