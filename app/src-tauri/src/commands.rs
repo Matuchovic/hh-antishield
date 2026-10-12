@@ -427,6 +427,18 @@ pub async fn check_update(
     Ok(info)
 }
 
+/// Aplikaci spuštěnou z DMG nebo z dočasného umístění, kam macOS přesouvá
+/// nepřesunuté stažené aplikace, nejde nahradit (jen pro čtení).
+pub(crate) fn update_location_ok() -> bool {
+    #[cfg(target_os = "macos")]
+    if let Ok(exe) = std::env::current_exe()
+        && crate::agent::installed_exe(&exe).is_err()
+    {
+        return false;
+    }
+    true
+}
+
 /// Stáhne aktualizaci, ověří její podpis (Ed25519) a nainstaluje ji.
 /// Nepodepsanou nebo poškozenou aktualizaci updater odmítne. Pak restart.
 #[tauri::command]
@@ -437,12 +449,7 @@ pub async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Resul
             "Počkejte na konec kontroly, pak aktualizujte.",
         ));
     }
-    // Aplikaci spuštěnou z DMG nebo z dočasného umístění, kam macOS přesouvá
-    // nepřesunuté stažené aplikace, nejde nahradit (jen pro čtení).
-    #[cfg(target_os = "macos")]
-    if let Ok(exe) = std::env::current_exe()
-        && crate::agent::installed_exe(&exe).is_err()
-    {
+    if !update_location_ok() {
         return Err(app_error(
             "update_location",
             "the app does not run from the Applications folder",

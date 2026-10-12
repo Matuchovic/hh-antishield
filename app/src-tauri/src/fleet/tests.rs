@@ -9,12 +9,14 @@ use std::collections::HashMap;
 use antishield_core::cleanup::CleanCategory;
 use antishield_core::fleet::{
     ACTIVATION_PREFIX, COMMAND, Command, CommandKind, FleetError, Identity, LastScan, MemoryState,
-    OneTimeCode, ResultState, VERSION, sign_and_seal,
+    OneTimeCode, Policy, ResultState, VERSION, sign_and_seal,
 };
 use antishield_core::status::ProtectionLevel;
 
-use super::admin::AdminState;
-use super::member::{Invitation, MemberState, Outcome, Received, ReportInput};
+use super::admin::{AdminState, CommandOptions};
+use super::member::{
+    Approval, ApprovalKind, Invitation, MemberState, Outcome, Received, ReportInput,
+};
 use super::relay::{CommandRow, InviteRow, RelayCommand, RelayDevice, RelayState};
 use super::view::RelayStatus;
 
@@ -274,6 +276,11 @@ fn report_input(model: &str) -> ReportInput {
         },
         uptime_secs: 60,
         cleanup: None,
+        hardware: None,
+        security: None,
+        performance: None,
+        quarantine: vec![],
+        events: vec![],
     }
 }
 
@@ -348,9 +355,19 @@ impl World {
     }
 
     fn send(&mut self, device: &str, kind: CommandKind, categories: &[CleanCategory]) -> String {
+        self.send_with(device, kind, categories, &CommandOptions::default())
+    }
+
+    fn send_with(
+        &mut self,
+        device: &str,
+        kind: CommandKind,
+        categories: &[CleanCategory],
+        options: &CommandOptions,
+    ) -> String {
         let (command, sealed) = self
             .admin
-            .command(device, kind, categories, self.relay.now)
+            .command(device, kind, categories, options, self.relay.now)
             .unwrap();
         self.relay
             .admin_command(
@@ -509,7 +526,13 @@ fn admin_and_mac_talk_only_through_signed_sealed_messages() {
     assert!(
         world
             .admin
-            .command(&device, CommandKind::Scan, &[], NOW)
+            .command(
+                &device,
+                CommandKind::Scan,
+                &[],
+                &CommandOptions::default(),
+                NOW
+            )
             .is_err()
     );
 }
@@ -522,16 +545,15 @@ fn the_relay_cannot_forge_commands_keys_or_results() {
 
     // Příkaz podepsaný kýmkoli jiným než správcem (schránka, útočník).
     let attacker = Identity::generate().unwrap();
-    let forged = Command {
-        v: VERSION,
-        id: "2b4e28ba-2fa1-41d2-883f-0016d3cca427".into(),
-        fleet_id: jana.fleet_id.clone(),
-        device_id: device.clone(),
-        kind: CommandKind::Cleanup,
-        categories: vec![CleanCategory::AppCaches],
-        issued_at_ms: NOW,
-        expires_at_ms: NOW + MINUTE,
-    };
+    let forged = Command::new(
+        "2b4e28ba-2fa1-41d2-883f-0016d3cca427".into(),
+        jana.fleet_id.clone(),
+        device.clone(),
+        CommandKind::Cleanup,
+        vec![CleanCategory::AppCaches],
+        NOW,
+        NOW + MINUTE,
+    );
     let sealed = sign_and_seal(&attacker, &jana.identity().public(), COMMAND, &forged).unwrap();
     assert!(matches!(
         jana.receive(&forged.id, &sealed, NOW),
@@ -608,12 +630,20 @@ fn the_relay_cannot_forge_commands_keys_or_results() {
     assert_eq!(removed, vec![karel.device_id.clone()]);
     assert!(!world.admin.devices.iter().any(|d| d.id == karel.device_id));
 
-    // Soubory uživatele a Koš správce ani neodešle.
+    // Mac bez potvrzené rozšířené správy (zatím bez zprávy = základní
+    // zásady): soubory uživatele, Koš ani nové zásahy správce neodešle.
+    let none = CommandOptions::default();
     for category in [CleanCategory::LargeFiles, CleanCategory::Trash] {
         assert!(matches!(
             world
                 .admin
-                .command(&device, CommandKind::Cleanup, &[category], NOW),
+                .command(&device, CommandKind::Cleanup, &[category], &none, NOW),
+            Err(FleetError::NotAllowed(_))
+        ));
+    }
+    for kind in [CommandKind::Restart, CommandKind::Update] {
+        assert!(matches!(
+            world.admin.command(&device, kind, &[], &none, NOW),
             Err(FleetError::NotAllowed(_))
         ));
     }
@@ -626,7 +656,13 @@ fn removing_a_mac_waits_for_its_signed_goodbye() {
     let device = eva.device_id.clone();
     let (command, sealed) = world
         .admin
-        .command(&device, CommandKind::Unenroll, &[], NOW)
+        .command(
+            &device,
+            CommandKind::Unenroll,
+            &[],
+            &CommandOptions::default(),
+            NOW,
+        )
         .unwrap();
     world
         .relay
@@ -652,7 +688,13 @@ fn removing_a_mac_waits_for_its_signed_goodbye() {
     assert!(
         world
             .admin
-            .command(&device, CommandKind::Scan, &[], NOW)
+            .command(
+                &device,
+                CommandKind::Scan,
+                &[],
+                &CommandOptions::default(),
+                NOW
+            )
             .is_err()
     );
     assert!(world.sync().is_empty(), "not yet confirmed by the Mac");
@@ -679,15 +721,10 @@ fn removing_a_mac_waits_for_its_signed_goodbye() {
 fn consent_requests_expire_and_floods_are_refused() {
     let mut world = World::new();
     let mut lucie = world.enroll("Lucie Černá");
-    lucie.add_approval(super::member::Approval {
-        id: "a".into(),
-        categories: vec![CleanCategory::Installers],
-        bytes: 10,
-        requested_at_ms: NOW,
-        expires_at_ms: NOW + MINUTE,
-        freed_bytes: 0,
-        trashed_bytes: 0,
-    });
+    let mut approval = Approval::new("a", ApprovalKind::Cleanup, NOW, NOW + MINUTE);
+    approval.categories = vec![CleanCategory::Installers];
+    approval.bytes = 10;
+    lucie.add_approval(approval);
     assert!(lucie.take_expired_approvals(NOW).is_empty());
     assert_eq!(lucie.take_expired_approvals(NOW + MINUTE).len(), 1);
     assert!(lucie.approvals.is_empty());
@@ -794,6 +831,7 @@ fn live_relay_round_trip() {
                     &member.device_id,
                     CommandKind::Scan,
                     &[],
+                    &CommandOptions::default(),
                     crate::state::now_ms(),
                 )
                 .unwrap();
@@ -1043,17 +1081,318 @@ fn commands_cut_off_by_a_restart_are_reported_as_failed() {
         ResultState::AwaitingConsent,
         Outcome::default(),
     );
-    ondrej.add_approval(super::member::Approval {
-        id: cleanup.clone(),
-        categories: vec![CleanCategory::Installers],
-        bytes: 1,
-        requested_at_ms: NOW,
-        expires_at_ms: NOW + MINUTE,
-        freed_bytes: 0,
-        trashed_bytes: 0,
-    });
+    let mut approval = Approval::new(&cleanup, ApprovalKind::Cleanup, NOW, NOW + MINUTE);
+    approval.categories = vec![CleanCategory::Installers];
+    approval.bytes = 1;
+    ondrej.add_approval(approval);
     // Kontrola běžela, když aplikace skončila; úklid čeká na souhlas.
     assert_eq!(ondrej.interrupted(), vec![scan.clone()]);
     world.post(&mut ondrej, &scan, ResultState::Failed, Outcome::default());
     assert!(ondrej.interrupted().is_empty());
+}
+
+/// Mac připojený ve verzi 0.7 má základní zásady: rozšířená správa začne
+/// platit až po souhlasu jeho uživatele.
+#[test]
+fn extended_management_starts_only_after_the_user_agrees() {
+    let mut world = World::new();
+    let mut viktoria = world.enroll("Viktória Ladiková");
+    let device = viktoria.device_id.clone();
+    viktoria.policy = Policy::basic();
+    let report = viktoria
+        .report(report_input("MacBook Air (Apple M2)"), NOW)
+        .unwrap();
+    world
+        .relay
+        .report(&device, &viktoria.device_token, &report)
+        .unwrap();
+    world.sync();
+    let none = CommandOptions::default();
+    let deep = CommandOptions {
+        deep: true,
+        ..CommandOptions::default()
+    };
+    assert!(
+        world
+            .admin
+            .command(&device, CommandKind::Restart, &[], &none, NOW)
+            .is_err()
+    );
+    assert!(
+        world
+            .admin
+            .command(
+                &device,
+                CommandKind::Cleanup,
+                &[CleanCategory::AppCaches],
+                &deep,
+                NOW
+            )
+            .is_err()
+    );
+
+    // Nabídka nese rozšířenou správu firmy; Mac ji přijme jako žádost.
+    let offer = world.send(&device, CommandKind::Policy, &[]);
+    let rows = world.relay.poll(&device, &viktoria.device_token).unwrap();
+    let Received::New(command) = viktoria.receive(&rows[0].id, &rows[0].envelope, NOW) else {
+        panic!("a policy offer waits for the user");
+    };
+    let offered = command.policy.clone().unwrap();
+    assert_eq!(offered, Policy::standard());
+
+    // Dokud uživatel nesouhlasí, Mac nový zásah odmítne i s platným podpisem.
+    let early = Command::new(
+        antishield_core::fleet::random_id().unwrap(),
+        viktoria.fleet_id.clone(),
+        device.clone(),
+        CommandKind::Restart,
+        vec![],
+        NOW,
+        NOW + MINUTE,
+    );
+    let sealed = sign_and_seal(
+        &world.admin.identity(),
+        &viktoria.identity().public(),
+        COMMAND,
+        &early,
+    )
+    .unwrap();
+    assert!(matches!(
+        viktoria.receive(&early.id, &sealed, NOW),
+        Received::Reject(FleetError::NotAllowed(_))
+    ));
+
+    // Souhlas: další zpráva nese nové zásady a správce smí víc.
+    viktoria.accept_policy(offered).unwrap();
+    world.post(&mut viktoria, &offer, ResultState::Done, Outcome::default());
+    let report = viktoria
+        .report(report_input("MacBook Air (Apple M2)"), NOW + 1)
+        .unwrap();
+    world
+        .relay
+        .report(&device, &viktoria.device_token, &report)
+        .unwrap();
+    world.sync();
+    assert_eq!(world.view_state(&device, &offer), "done");
+    assert_eq!(
+        world.admin.view(&RelayStatus::default(), NOW).devices[0].policy,
+        Policy::standard()
+    );
+    let restart = world.send(&device, CommandKind::Restart, &[]);
+    let quit = world.send_with(
+        &device,
+        CommandKind::QuitApps,
+        &[],
+        &CommandOptions {
+            targets: vec!["com.google.Chrome".into()],
+            ..CommandOptions::default()
+        },
+    );
+    let cleanup = world.send_with(
+        &device,
+        CommandKind::Cleanup,
+        &[CleanCategory::AppCaches, CleanCategory::Trash],
+        &deep,
+    );
+    let rows = world.relay.poll(&device, &viktoria.device_token).unwrap();
+    assert_eq!(rows.len(), 3);
+    for row in &rows {
+        let Received::New(command) = viktoria.receive(&row.id, &row.envelope, NOW + 2) else {
+            panic!("allowed after consent");
+        };
+        if command.kind == CommandKind::Cleanup {
+            // Koš vždy až se souhlasem, i v hloubkovém úklidu.
+            assert_eq!(
+                viktoria.policy.split(&command.categories),
+                (vec![CleanCategory::AppCaches], vec![CleanCategory::Trash])
+            );
+        }
+    }
+    world.post(
+        &mut viktoria,
+        &restart,
+        ResultState::AwaitingConsent,
+        Outcome {
+            until_ms: Some(NOW + 60 * MINUTE),
+            ..Outcome::default()
+        },
+    );
+    world.post(
+        &mut viktoria,
+        &quit,
+        ResultState::Done,
+        Outcome {
+            count: 1,
+            note: Some("Google Chrome".into()),
+            ..Outcome::default()
+        },
+    );
+    world.sync();
+    let view = world.admin.view(&RelayStatus::default(), NOW);
+    let find = |id: &str| {
+        view.devices[0]
+            .commands
+            .iter()
+            .find(|c| c.id == id)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(find(&restart).state, "awaitingConsent");
+    assert_eq!(find(&restart).until_ms, Some(NOW + 60 * MINUTE));
+    assert_eq!(find(&quit).count, 1);
+    assert_eq!(find(&quit).note.as_deref(), Some("Google Chrome"));
+    assert_eq!(find(&quit).targets, vec!["com.google.Chrome".to_string()]);
+    assert!(find(&cleanup).deep);
+}
+
+#[test]
+fn report_details_follow_the_policy_and_fit_the_relay() {
+    use antishield_core::Severity;
+    use antishield_core::fleet::{
+        AppUsage, EventReport, HardwareReport, LoginItemReport, MAX_SEALED_CHARS,
+        PerformanceReport, QuarantineReport, SecurityReport,
+    };
+    let mut world = World::new();
+    let mut tomas = world.enroll("Tomáš Svoboda");
+    let device = tomas.device_id.clone();
+    let rich = || {
+        let mut input = report_input("MacBook Pro (Apple M1 Max)");
+        input.hardware = Some(HardwareReport {
+            chip: "Apple M1 Max".into(),
+            model_id: "MacBookPro18,2".into(),
+            serial: Some("C02ZZ0AAMD6T".into()),
+            cores: 10,
+            performance_cores: Some(8),
+            efficiency_cores: Some(2),
+            memory: 32,
+            battery: None,
+        });
+        input.security = Some(SecurityReport {
+            filevault: Some(false),
+            firewall: Some(true),
+            ..SecurityReport::default()
+        });
+        input.performance = Some(PerformanceReport {
+            measured_at_ms: NOW,
+            cpu_permille: 120,
+            cores: 10,
+            swap_used: 0,
+            apps: (0..12)
+                .map(|i| AppUsage {
+                    name: format!("App {i}"),
+                    bundle_id: Some(format!("com.example.app{i}")),
+                    cpu_permille: 10,
+                    memory: 1,
+                    processes: 1,
+                })
+                .collect(),
+            login_items: (0..40)
+                .map(|i| LoginItemReport {
+                    label: format!("com.example.agent{i}{}", "x".repeat(150)),
+                    program: Some("y".repeat(150)),
+                    enabled: true,
+                    system: false,
+                    running: false,
+                })
+                .collect(),
+        });
+        input.quarantine = (0..30)
+            .map(|i| QuarantineReport {
+                id: format!("{i:016x}"),
+                path: format!("/Users/tomas/Downloads/{}", "z".repeat(900)),
+                rule_name: "R".repeat(150),
+                severity: Severity::High,
+                at_ms: NOW,
+                size: 1,
+                sha256: "a".repeat(64),
+            })
+            .collect();
+        input.events = (0..40)
+            .map(|i| EventReport {
+                kind: "quarantined".into(),
+                at_ms: NOW + i,
+                data: serde_json::json!({ "path": "p".repeat(500) }),
+            })
+            .collect();
+        input
+    };
+
+    // Základní zásady: nic z podrobností neodejde.
+    tomas.policy = Policy::basic();
+    let sealed = tomas.report(rich(), NOW).unwrap();
+    world
+        .relay
+        .report(&device, &tomas.device_token, &sealed)
+        .unwrap();
+    world.sync();
+    let report = world.admin.devices[0].report.clone().unwrap();
+    assert!(report.hardware.is_none() && report.security.is_none());
+    assert!(report.performance.is_none());
+    assert!(report.quarantine.is_empty() && report.events.is_empty());
+    assert_eq!(report.policy, Some(Policy::basic()));
+
+    // Rozšířená správa: podrobnosti dorazí, příliš velká zpráva se zkrátí.
+    tomas.policy = Policy::standard();
+    let sealed = tomas.report(rich(), NOW + 1).unwrap();
+    assert!(sealed.len() <= MAX_SEALED_CHARS);
+    world
+        .relay
+        .report(&device, &tomas.device_token, &sealed)
+        .unwrap();
+    world.sync();
+    let report = world.admin.devices[0].report.clone().unwrap();
+    assert_eq!(
+        report.hardware.as_ref().map(|h| h.chip.as_str()),
+        Some("Apple M1 Max")
+    );
+    assert_eq!(
+        report.security.as_ref().and_then(|s| s.filevault),
+        Some(false)
+    );
+    assert_eq!(report.performance.as_ref().map(|p| p.apps.len()), Some(12));
+    assert!(
+        report.events.len() < 40,
+        "the least important list shrank first"
+    );
+    assert!(report.quarantine.len() <= 30);
+}
+
+#[test]
+fn a_snoozed_restart_comes_back_and_still_expires() {
+    let mut world = World::new();
+    let mut eva = world.enroll("Eva Kučerová");
+    eva.snooze(
+        Approval::new("r", ApprovalKind::Restart, NOW, NOW + 90 * MINUTE),
+        NOW + 60 * MINUTE,
+    );
+    assert_eq!(eva.approvals[0].snoozed_until_ms, Some(NOW + 60 * MINUTE));
+    assert!(eva.take_due_snoozes(NOW + 30 * MINUTE).is_empty());
+    assert_eq!(eva.take_due_snoozes(NOW + 60 * MINUTE).len(), 1);
+    assert_eq!(eva.approvals[0].snoozed_until_ms, None, "shown again");
+    // Odklad nepřesáhne platnost žádosti; prošlá žádost zmizí.
+    let again = eva.take_approval("r").unwrap();
+    eva.snooze(again, NOW + 10 * 60 * MINUTE);
+    assert_eq!(eva.approvals[0].snoozed_until_ms, Some(NOW + 90 * MINUTE));
+    assert_eq!(eva.take_expired_approvals(NOW + 90 * MINUTE).len(), 1);
+    // Žádost uložená verzí 0.7 (bez druhu) je úklid.
+    let old: Approval = serde_json::from_str(
+        r#"{"id":"x","categories":["installers"],"bytes":1,"requestedAtMs":1,"expiresAtMs":2,"freedBytes":0,"trashedBytes":0}"#,
+    )
+    .unwrap();
+    assert_eq!(old.kind, ApprovalKind::Cleanup);
+}
+
+#[test]
+fn a_fleet_from_0_7_offers_extended_management_to_new_macs() {
+    let mut world = World::new();
+    world.admin.policy = Policy::basic();
+    assert!(world.admin.upgrade_policy());
+    assert!(!world.admin.upgrade_policy());
+    let mac = world.enroll("Nový Mac");
+    assert_eq!(mac.policy, Policy::standard());
+    // Bez zprávy Macu počítá správce se základními zásadami (bezpečnější).
+    assert_eq!(
+        world.admin.view(&RelayStatus::default(), NOW).devices[0].policy,
+        Policy::basic()
+    );
 }

@@ -385,6 +385,7 @@ fn main() {
             fleet::fleet_join,
             fleet::fleet_leave,
             fleet::fleet_approve,
+            fleet::fleet_approval_details,
         ])
         .build(tauri::generate_context!())
         .expect("H&H AntiShield se nepodařilo spustit");

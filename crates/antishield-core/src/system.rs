@@ -904,3 +904,53 @@ pub fn machine() -> Machine {
         model: "PC".to_string(),
     }
 }
+
+/// Požádá systém o běžný restart: aplikace se zeptají na uložení práce
+/// a uživatel ho ještě může zastavit. Na macOS přes Finder (systém se poprvé
+/// zeptá, jestli AntiShield smí Finder ovládat), na Windows za minutu
+/// s oznámením. Nic nevynucuje.
+#[cfg(target_os = "macos")]
+pub fn request_restart() -> Result<(), EngineError> {
+    let out = std::process::Command::new("/usr/bin/osascript")
+        .args(["-e", "tell application id \"com.apple.finder\" to restart"])
+        .output()
+        .map_err(|e| EngineError::InvalidRequest(e.to_string()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&out.stderr);
+    Err(EngineError::InvalidRequest(if detail.contains("-1743") {
+        "automation not allowed".into()
+    } else {
+        "the system did not accept the restart".into()
+    }))
+}
+
+#[cfg(windows)]
+pub fn request_restart() -> Result<(), EngineError> {
+    let windir = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    let status = std::process::Command::new(PathBuf::from(windir).join(r"System32\shutdown.exe"))
+        .args([
+            "/r",
+            "/t",
+            "60",
+            "/c",
+            "AntiShield: restart na žádost správce firmy.",
+        ])
+        .status()
+        .map_err(|e| EngineError::InvalidRequest(e.to_string()))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(EngineError::InvalidRequest(
+            "the system did not accept the restart".into(),
+        ))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn request_restart() -> Result<(), EngineError> {
+    Err(EngineError::InvalidRequest(
+        "restart is not supported on this system".into(),
+    ))
+}

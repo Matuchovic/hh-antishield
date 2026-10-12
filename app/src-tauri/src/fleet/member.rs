@@ -5,9 +5,11 @@
 use antishield_core::cleanup::CleanCategory;
 use antishield_core::fleet::{
     self as proto, ADMIN_BUNDLE, AdminBundle, COMMAND_LIFETIME_MS, CleanupEstimate, Command,
-    CommandKind, CommandResult, DEVICE_BUNDLE, DeviceBundle, FleetError, INVITE_PREFIX, Identity,
-    IdentitySecret, LEAVE, LastScan, LeaveNotice, Membership, MemoryState, OneTimeCode, Policy,
-    PublicKeys, REPORT, RESULT, Report, ResultState, ThreatReport, VERSION,
+    CommandKind, CommandResult, DEVICE_BUNDLE, DeviceBundle, EventReport, FleetError,
+    HardwareReport, INVITE_PREFIX, Identity, IdentitySecret, LEAVE, LastScan, LeaveNotice,
+    MAX_SEALED_CHARS, Membership, MemoryState, OneTimeCode, PerformanceReport, Policy, PublicKeys,
+    QuarantineReport, REPORT, RESULT, Report, ResultState, SecurityReport, ShareScope,
+    ThreatReport, VERSION,
 };
 use antishield_core::speed::DiskInfo;
 use antishield_core::status::ProtectionLevel;
@@ -36,11 +38,39 @@ pub struct Executed {
     pub done: bool,
 }
 
-/// Úklid, který čeká na souhlas uživatele.
+/// Na co žádost čeká.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ApprovalKind {
+    /// Úklid se souhlasem: kategorie, velké soubory, Koš, zavření aplikací.
+    #[default]
+    Cleanup,
+    Restart,
+    QuitApps,
+    /// Rozšíření zásad.
+    Policy,
+}
+
+/// Aplikace v žádosti: k zavření (hloubkový úklid), nebo k ukončení.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalApp {
+    pub id: String,
+    pub name: String,
+    /// Mezipaměti aplikace (hloubkový úklid), nebo její paměť (ukončení).
+    pub bytes: u64,
+    /// Hloubkový úklid: položky skenu, které aplikaci patří.
+    #[serde(default)]
+    pub items: Vec<String>,
+}
+
+/// Žádost správce, která čeká na souhlas uživatele.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Approval {
     pub id: String,
+    #[serde(default)]
+    pub kind: ApprovalKind,
     pub categories: Vec<CleanCategory>,
     pub bytes: u64,
     pub requested_at_ms: u64,
@@ -48,6 +78,32 @@ pub struct Approval {
     /// Co se z téhož příkazu uklidilo hned (kategorie bez souhlasu).
     pub freed_bytes: u64,
     pub trashed_bytes: u64,
+    #[serde(default)]
+    pub apps: Vec<ApprovalApp>,
+    /// Nabízené zásady.
+    #[serde(default)]
+    pub policy: Option<Policy>,
+    /// Restart: uživatel ho odložil do této chvíle.
+    #[serde(default)]
+    pub snoozed_until_ms: Option<u64>,
+}
+
+impl Approval {
+    pub fn new(id: &str, kind: ApprovalKind, now: u64, expires_at_ms: u64) -> Self {
+        Self {
+            id: id.to_string(),
+            kind,
+            categories: Vec::new(),
+            bytes: 0,
+            requested_at_ms: now,
+            expires_at_ms,
+            freed_bytes: 0,
+            trashed_bytes: 0,
+            apps: Vec::new(),
+            policy: None,
+            snoozed_until_ms: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -107,7 +163,7 @@ impl Invitation {
 #[derive(Debug)]
 pub enum Received {
     /// Nový platný příkaz: provést.
-    New(Command),
+    New(Box<Command>),
     /// Opakované doručení: znovu poslat uložený výsledek.
     Repost(String),
     /// Opakované doručení bez výsledku (příkaz ještě běží).
@@ -116,13 +172,29 @@ pub enum Received {
     Reject(FleetError),
 }
 
-/// Číselné výsledky příkazu.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Výsledky příkazu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Outcome {
     pub freed_bytes: u64,
     pub trashed_bytes: u64,
     pub files: u64,
     pub threats: u64,
+    /// Ukončené nebo zavřené aplikace, smazané položky karantény.
+    pub count: u64,
+    pub note: Option<String>,
+    /// Odložený restart.
+    pub until_ms: Option<u64>,
+}
+
+impl Outcome {
+    /// Uklizené místo (výchozí stav dalšího kroku téhož příkazu).
+    pub fn bytes(freed_bytes: u64, trashed_bytes: u64) -> Self {
+        Self {
+            freed_bytes,
+            trashed_bytes,
+            ..Self::default()
+        }
+    }
 }
 
 /// Údaje do zprávy o stavu (sbírá aplikace).
@@ -142,6 +214,12 @@ pub struct ReportInput {
     pub memory: MemoryState,
     pub uptime_secs: u64,
     pub cleanup: Option<CleanupEstimate>,
+    /// Podrobnosti rozšířené správy (do zprávy jdou jen podle zásad).
+    pub hardware: Option<HardwareReport>,
+    pub security: Option<SecurityReport>,
+    pub performance: Option<PerformanceReport>,
+    pub quarantine: Vec<QuarantineReport>,
+    pub events: Vec<EventReport>,
 }
 
 fn truncate(text: &str, max: usize) -> String {
@@ -220,7 +298,7 @@ impl MemberState {
                     result: None,
                     done: false,
                 });
-                Received::New(command)
+                Received::New(Box::new(command))
             }
             Err(FleetError::Replay) => self
                 .executed
@@ -254,6 +332,9 @@ impl MemberState {
             files: outcome.files,
             threats: outcome.threats,
             error: error.map(|e| truncate(e, 200)),
+            count: outcome.count,
+            note: outcome.note.map(|n| truncate(&n, 200)),
+            until_ms: outcome.until_ms,
         };
         let sealed = proto::sign_and_seal(&self.identity(), &self.admin, RESULT, &result)?;
         if let Some(entry) = self.executed.iter_mut().find(|e| e.id == command_id) {
@@ -263,16 +344,26 @@ impl MemberState {
         Ok(sealed)
     }
 
-    /// Podepsaná a zašifrovaná zpráva o stavu pro správce.
+    /// Podepsaná a zašifrovaná zpráva o stavu pro správce. Podrobnosti jdou
+    /// jen podle potvrzených zásad; příliš velká zpráva přijde o nejméně
+    /// důležité seznamy.
     pub fn report(&mut self, input: ReportInput, now: u64) -> Result<String, FleetError> {
         self.seq += 1;
+        let shares = |scope| self.policy.shares(scope);
         let mut threats = input.threats;
         threats.truncate(proto::MAX_REPORT_THREATS);
         for threat in &mut threats {
             threat.rule_name = truncate(&threat.rule_name, 200);
             threat.path = truncate(&threat.path, 1024);
         }
-        let report = Report {
+        let (mut quarantine, mut events) = if shares(ShareScope::Threats) {
+            (input.quarantine, input.events)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        quarantine.truncate(proto::MAX_REPORT_QUARANTINE);
+        events.truncate(proto::MAX_REPORT_EVENTS);
+        let mut report = Report {
             v: VERSION,
             device_id: self.device_id.clone(),
             fleet_id: self.fleet_id.clone(),
@@ -292,8 +383,45 @@ impl MemberState {
             memory: input.memory,
             uptime_secs: input.uptime_secs,
             cleanup: input.cleanup,
+            policy: Some(self.policy.clone()),
+            hardware: input.hardware.filter(|_| shares(ShareScope::Hardware)),
+            security: input.security.filter(|_| shares(ShareScope::Security)),
+            performance: input
+                .performance
+                .filter(|_| shares(ShareScope::Performance)),
+            quarantine,
+            events,
         };
-        proto::sign_and_seal(&self.identity(), &self.admin, REPORT, &report)
+        let identity = self.identity();
+        loop {
+            let sealed = proto::sign_and_seal(&identity, &self.admin, REPORT, &report)?;
+            if sealed.len() <= MAX_SEALED_CHARS {
+                return Ok(sealed);
+            }
+            let half = |len: usize| len / 2;
+            if !report.events.is_empty() {
+                report.events.truncate(half(report.events.len()));
+            } else if !report.quarantine.is_empty() {
+                report.quarantine.truncate(half(report.quarantine.len()));
+            } else if let Some(perf) = report
+                .performance
+                .as_mut()
+                .filter(|p| !p.login_items.is_empty())
+            {
+                perf.login_items.truncate(half(perf.login_items.len()));
+            } else if !report.threats.is_empty() {
+                report.threats.truncate(half(report.threats.len()));
+            } else {
+                return Err(FleetError::Malformed("report too large".into()));
+            }
+        }
+    }
+
+    /// Uživatel souhlasil s novými zásadami.
+    pub fn accept_policy(&mut self, policy: Policy) -> Result<(), FleetError> {
+        policy.validate()?;
+        self.policy = policy;
+        Ok(())
     }
 
     /// Podepsané oznámení správci, že uživatel Mac odpojil.
@@ -325,6 +453,25 @@ impl MemberState {
     pub fn take_approval(&mut self, id: &str) -> Option<Approval> {
         let index = self.approvals.iter().position(|a| a.id == id)?;
         Some(self.approvals.remove(index))
+    }
+
+    /// Odloží žádost (restart) do daného času.
+    pub fn snooze(&mut self, approval: Approval, until_ms: u64) {
+        let mut approval = approval;
+        approval.snoozed_until_ms = Some(until_ms.min(approval.expires_at_ms));
+        self.add_approval(approval);
+    }
+
+    /// Odložené žádosti, kterým právě skončil odklad (znovu se ukážou).
+    pub fn take_due_snoozes(&mut self, now: u64) -> Vec<Approval> {
+        let mut due = Vec::new();
+        for approval in &mut self.approvals {
+            if approval.snoozed_until_ms.is_some_and(|until| until <= now) {
+                approval.snoozed_until_ms = None;
+                due.push(approval.clone());
+            }
+        }
+        due
     }
 
     /// Žádosti, o kterých uživatel nerozhodl do konce platnosti příkazu.

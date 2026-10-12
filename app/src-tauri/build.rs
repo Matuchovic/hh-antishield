@@ -45,6 +45,7 @@ fn main() {
         "fleet_join",
         "fleet_leave",
         "fleet_approve",
+        "fleet_approval_details",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri-build failed");
