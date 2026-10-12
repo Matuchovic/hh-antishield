@@ -12,9 +12,9 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   nikdy. Připojení kódem pozvánky; uživatel před připojením vidí, co správce
   uvidí a smí, a otisk jeho klíče; může se kdykoli odpojit. Schránka na
   Supabase (projekt Matucha) je jen přepravník šifrovaných zpráv.
-  Schránka je nasazená jen zčásti: funkce, které mažou řádky (stav firmy,
-  vyzvednutí příkazů, odpojení, odebrání Macu), čekají na potvrzení
-  uživatele v Supabase.
+  Schránka je nasazená celá (12. 10. 2026, uživatel spustil
+  `relay/migrations/0001_antishield_fleet.sql` v SQL editoru; těla všech
+  18 funkcí se shodují s repozitářem).
 - v0.1.1, v0.1.2 a v0.2.0 vydány; první produkční sada pravidel zveřejněna
   (vydání `rules`).
 - v0.2.0 na macOS padá hned po startu: tvrzené prostředí ukončí vlákno
@@ -167,8 +167,15 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   samotest v SQL jako `anon` (neplatná/jednorázová aktivace a pozvánka,
   cizí tokeny, platnost nad 8 dní, žádný přímý přístup k tabulkám),
   vše vráceno. Obrazovky v Chromiu s náhradou IPC bez chyb v konzoli.
-  Živý test proti schránce (`live_relay_contract`, `live_relay_round_trip`)
-  čeká na dokončení schránky.
+- 0.7 schránka: SQL na zkušebním PostgreSQL 16 dvakrát po sobě bez chyby,
+  `relay/tests/relay_test.sql` 52/52 jako `anon` (celý životní cyklus,
+  opakované doručení po 10 min, limity 50/20, odpojení, odebrání, smazání,
+  práva). Klient aplikace proti místnímu PostgREST 12.2.3 se stejným SQL:
+  `live_relay_contract` i `live_relay_round_trip` prošly (odhalily, že živé
+  testy neinstalovaly poskytovatele TLS – aplikace ho má v `main`, opraveno
+  v testech). V Supabase po nasazení kouřový test všech funkcí jako `anon`
+  v transakci, která se vrátila; schránka zůstala prázdná. Z kontejneru na
+  supabase.co přes HTTP nejde, `live_relay_contract` proto běží v CI.
 - Rust: 128 testů na Linuxu (jádro 98, CLI 2, aplikace 28; 2 živé testy
   schránky se spouští zvlášť) + test PKG/DMG jen na macOS, clippy
   `-D warnings`, rustfmt. Nové: čištění (nález
@@ -215,12 +222,9 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   macOS po aktualizaci obvykle zapomene udělená oprávnění (plný přístup,
   složky); žádost o přístup proto radí přepínač vypnout a zapnout.
 - Architektonický dokument (Claude Docs) ještě popisuje nativní variantu.
-- Schránka firemní správy je nasazená bez funkcí, které mažou řádky
-  (`antishield_fleet_admin_state`, `_poll`, `_leave`, `_admin_remove_device`,
-  `_admin_delete_fleet`, `_admin_revoke_invite`): Supabase MCP je spustí jen
-  s potvrzením uživatele. Do té doby firemní správa nefunguje.
-- Tajnou proměnnou `ANTISHIELD_FLEET_ACTIVATION` (živý test v CI) z cloudu
-  nastavit nejde; nastaví uživatel.
+- Tajnou proměnnou `ANTISHIELD_FLEET_ACTIVATION` (celá cesta proti živé
+  schránce v CI) z cloudu nastavit nejde; nastaví uživatel (volitelné,
+  smlouva se schránkou běží v CI i bez ní).
 - Poradce zabezpečení Supabase u schránky hlásí „RLS bez politik“ (tabulky
   jsou záměrně bez přístupu) a „SECURITY DEFINER volatelná rolí anon“
   (záměr: funkce jsou API schránky a samy ověřují tokeny).
@@ -235,8 +239,7 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Uživatel potvrdí zbytek schránky (nebo spustí `relay/migrations/0001…sql`
-v SQL editoru Supabase) → přidat do CI krok `live_relay_contract` a ověřit
-→ PR #11 z konceptu, sloučit, Release 0.7.0 → na Macu správce: založit firmu, pozvat Mac,
+CI s krokem `live_relay_contract` proti živé schránce zelené → PR #11
+z konceptu, sloučit, Release 0.7.0 → na Macu správce: založit firmu, pozvat Mac,
 na firemním Macu připojit, poslat úklid a kontrolu, souhlas s instalátory,
 odpojení.

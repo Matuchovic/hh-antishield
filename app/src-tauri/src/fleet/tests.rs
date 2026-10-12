@@ -713,6 +713,21 @@ fn consent_requests_expire_and_floods_are_refused() {
     assert_eq!(refused, 1);
 }
 
+/// Schránka pro živé testy: Supabase, nebo jiná adresa z prostředí
+/// (`ANTISHIELD_FLEET_RELAY_URL`, např. místní PostgREST se stejným SQL).
+fn live_relay() -> super::relay::Relay {
+    // Aplikace instaluje poskytovatele TLS v `main`, testy ho musí samy.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    match std::env::var("ANTISHIELD_FLEET_RELAY_URL") {
+        Ok(url) => super::relay::Relay::with(
+            &url,
+            &std::env::var("ANTISHIELD_FLEET_RELAY_KEY").unwrap_or_default(),
+        )
+        .unwrap(),
+        Err(_) => super::relay::Relay::new().unwrap(),
+    }
+}
+
 /// Celá cesta proti skutečné schránce (Supabase). Firma vznikne s aktivačním
 /// kódem z prostředí a na konci se smaže.
 #[test]
@@ -720,7 +735,7 @@ fn consent_requests_expire_and_floods_are_refused() {
 fn live_relay_round_trip() {
     let activation = std::env::var("ANTISHIELD_FLEET_ACTIVATION").expect("activation code");
     tauri::async_runtime::block_on(async move {
-        let relay = super::relay::Relay::new().unwrap();
+        let relay = live_relay();
         let now = crate::state::now_ms();
         let mut admin = AdminState::new("AntiShield CI", "CI", now).unwrap();
         let code = OneTimeCode::parse(ACTIVATION_PREFIX, &activation).unwrap();
@@ -933,7 +948,7 @@ fn relay_state_json_from_sql_is_understood() {
 fn live_relay_contract() {
     use super::relay::RelayError::Rejected;
     tauri::async_runtime::block_on(async {
-        let relay = super::relay::Relay::new().unwrap();
+        let relay = live_relay();
         let id = || antishield_core::fleet::random_id().unwrap();
         let token = antishield_core::fleet::random_token().unwrap();
         let soon = crate::state::now_ms() + 24 * 60 * MINUTE;

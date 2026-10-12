@@ -29,6 +29,29 @@ Soubory uživatele a Koš na dálku nikdy.
 Funkce, které mažou řádky (úklid starých dat, odebrání Macu, odpojení),
 potřebují při nasazení přes Supabase MCP potvrzení uživatele.
 
+## Ověření před nasazením změn
+
+Na zkušebním PostgreSQL (nikdy ne v Supabase):
+
+```sh
+psql -f relay/tests/supabase_roles.sql                    # role jako v Supabase
+psql -1 -f relay/migrations/0001_antishield_fleet.sql     # 2×, musí projít i opakovaně
+psql -f relay/tests/relay_test.sql                        # → ALL RELAY TESTS PASSED
+```
+
+Klient aplikace proti stejnému SQL: spusťte PostgREST (`PGRST_DB_SCHEMAS=public`,
+`PGRST_DB_ANON_ROLE=anon`) a před něj `python3 relay/tests/gateway.py 3011`
+(cesta `/rest/v1` jako v Supabase), vytvořte aktivační kód nástrojem níže
+a spusťte:
+
+```sh
+ANTISHIELD_FLEET_RELAY_URL=http://127.0.0.1:3011 ANTISHIELD_FLEET_ACTIVATION=HHA1-… \
+  cargo test -p antishield-app live_relay -- --ignored
+```
+
+CI pouští `live_relay_contract` proti skutečné schránce při každém běhu
+(nic nezakládá), celou cestu jen s tajnou proměnnou níže.
+
 ## Aktivační kód pro správce
 
 Založit firmu jde jen s jednorázovým aktivačním kódem:

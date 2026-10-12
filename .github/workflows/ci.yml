@@ -83,9 +83,11 @@ jobs:
       - run: cargo clippy -p antishield-app --all-targets -- -D warnings
       - name: Testy aplikace (včetně firemní správy se schránkou v paměti)
         run: cargo test -p antishield-app
-      - name: Firemní správa proti živé schránce
+      - name: Smlouva s živou schránkou (nic nezakládá)
+        run: cargo test -p antishield-app live_relay_contract -- --ignored --nocapture
+      - name: Celá cesta přes živou schránku (firma se na konci smaže)
         if: env.ANTISHIELD_FLEET_ACTIVATION != ''
-        run: cargo test -p antishield-app live_relay -- --ignored --nocapture
+        run: cargo test -p antishield-app live_relay_round_trip -- --ignored --nocapture
       - run: cargo run -p antishield-app -- --self-test
 
   deny:
