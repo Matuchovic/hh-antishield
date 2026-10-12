@@ -4,20 +4,26 @@ import {
   categoriesWith,
   categoryList,
   commandStatus,
+  commandTitle,
   compareVersions,
   connectionText,
+  deviceHealth,
   deviceIssues,
   deviceTone,
   fleetHeadline,
   fleetTotals,
   groupFingerprint,
   initials,
+  isExtended,
   isOnline,
+  offersMore,
   policyRule,
   reclaimable,
+  recommendations,
+  securityChecks,
   shortName,
 } from "./fleet";
-import type { FleetCommand, FleetDevice, FleetPolicy, FleetReport } from "./types";
+import type { FleetCommand, FleetDevice, FleetPolicy, FleetReport, FleetSecurity } from "./types";
 
 const NOW = 1_800_000_000_000;
 const GB = 1_000_000_000;
@@ -60,6 +66,7 @@ function device(over: Partial<FleetDevice> = {}): FleetDevice {
     joinedAtMs: NOW - 86_400_000,
     lastSeenMs: NOW - 20_000,
     left: false,
+    policy,
     report: report(),
     commands: [],
     ...over,
@@ -79,6 +86,12 @@ function command(over: Partial<FleetCommand> = {}): FleetCommand {
     files: 0,
     threats: 0,
     error: null,
+    deep: false,
+    full: false,
+    targets: [],
+    count: 0,
+    note: null,
+    untilMs: null,
     ...over,
   };
 }
@@ -120,6 +133,7 @@ describe("firemní Macy", () => {
     expect(reclaimable(r, policy, "never")).toBe(20 * GB);
     expect(categoriesWith(r, policy, "auto")).toEqual(["appCaches"]);
     expect(categoryList(policy.auto)).toBe("mezipaměti aplikací, staré protokoly a vývojářské mezipaměti");
+    expect(categoryList(["trash", "installers"])).toBe("staré instalátory a Koš");
   });
 
   it("shrne firmu do jedné věty", () => {
@@ -129,7 +143,6 @@ describe("firemní Macy", () => {
         device({ id: "d2", lastSeenMs: NOW - 86_400_000, report: report({ protection: "manualScanOnly" }) }),
         device({ id: "d3", left: true }),
       ],
-      policy,
       "0.7.0",
       NOW,
     );
@@ -157,3 +170,123 @@ describe("firemní Macy", () => {
     expect(groupFingerprint("7f3a91c24b0e5d11")).toBe("7F3A 91C2 4B0E 5D11");
   });
 });
+
+const DAY = 86_400_000;
+const extended: FleetPolicy = {
+  auto: ["appCaches", "logs", "developer"],
+  consent: ["installers", "leftovers", "largeFiles", "trash"],
+  actions: ["deepClean", "restart", "quitApps", "updates", "fullScan", "quarantineDelete"],
+  share: ["hardware", "security", "performance", "threats"],
+};
+
+function security(over: Partial<FleetSecurity> = {}): FleetSecurity {
+  return {
+    filevault: true,
+    firewall: true,
+    stealth: false,
+    sip: true,
+    gatekeeper: true,
+    xprotect: "5310",
+    autoUpdates: true,
+    osUpdates: [],
+    backup: { configured: true, auto: true, lastMs: NOW - DAY },
+    fullDiskAccess: true,
+    ...over,
+  };
+}
+
+describe("detail firemního Macu", () => {
+  it("pojmenuje vypnuté ochrany systému lidsky a správně česky", () => {
+    const checks = securityChecks(
+      security({
+        filevault: false,
+        autoUpdates: null,
+        osUpdates: [
+          { title: "macOS Sequoia 15.7.1", version: "15.7.1", restart: true, recommended: true },
+          { title: "Safari 26.0.1", version: null, restart: false, recommended: true },
+        ],
+        backup: { configured: true, auto: true, lastMs: NOW - 12 * DAY },
+      }),
+      NOW,
+    );
+    const find = (id: string) => checks.find((c) => c.id === id);
+    expect(find("filevault")).toMatchObject({ state: "off", label: "Vypnuto", offTitle: "Disk není šifrovaný (FileVault)" });
+    expect(find("updates")).toMatchObject({
+      state: "off",
+      label: "Čeká",
+      offTitle: "Čekají 2 aktualizace macOS",
+      detail: "Čekají 2 aktualizace: macOS Sequoia 15.7.1, Safari 26.0.1.",
+    });
+    expect(find("autoUpdates")).toMatchObject({ state: "unknown", label: "Nezjištěno" });
+    expect(find("backup")).toMatchObject({ state: "off", label: "Stará", offTitle: "Poslední záloha proběhla před 12 dny" });
+    expect(find("fullDiskAccess")).toMatchObject({ state: "on", label: "Povolen" });
+    const none = securityChecks(security({ backup: { configured: false, auto: null, lastMs: null } }), NOW);
+    expect(none.find((c) => c.id === "backup")).toMatchObject({ label: "Nenastavená", offTitle: "Mac se nezálohuje" });
+    expect(none.find((c) => c.id === "updates")).toMatchObject({ state: "on", label: "Aktuální" });
+  });
+
+  it("nechválí Mac, o jehož zabezpečení nic neví", () => {
+    const basic = deviceHealth(device(), "0.7.0", NOW);
+    expect(basic).toMatchObject({ score: 100, partial: true, label: "Ze základních údajů", tone: "good" });
+
+    const full = deviceHealth(device({ policy: extended, report: report({ security: security() }) }), "0.7.0", NOW);
+    expect(full).toMatchObject({ score: 100, partial: false, label: "Výborný stav" });
+
+    const weak = deviceHealth(
+      device({
+        policy: extended,
+        report: report({
+          security: security({ filevault: false, osUpdates: [{ title: "macOS 15.7.1", version: null, restart: true, recommended: true }] }),
+        }),
+      }),
+      "0.7.0",
+      NOW,
+    );
+    expect(weak.factors).toEqual([
+      { text: "Disk není šifrovaný (FileVault)", points: 12 },
+      { text: "Čeká aktualizace macOS", points: 5 },
+    ]);
+    expect(weak).toMatchObject({ score: 83, tone: "caution", label: "Chce pozornost" });
+  });
+
+  it("doporučí jen zásahy, které Mac dovolil", () => {
+    const old = report({ appVersion: "0.7.0", uptimeSecs: 16 * 86_400, security: security({ firewall: false }) });
+    const basicRecs = recommendations(device({ report: old }), "0.8.0", NOW);
+    expect(basicRecs.find((r) => r.id === "update")?.action).toBeUndefined();
+    expect(basicRecs.find((r) => r.id === "restart")?.action).toBeUndefined();
+
+    const extRecs = recommendations(device({ policy: extended, report: old }), "0.8.0", NOW);
+    expect(extRecs.find((r) => r.id === "update")?.action).toEqual({ label: "Aktualizovat", kind: "update" });
+    expect(extRecs.find((r) => r.id === "restart")?.action).toEqual({ label: "Požádat o restart", kind: "restart" });
+    expect(extRecs.find((r) => r.id === "security-firewall")).toMatchObject({ title: "Firewall je vypnutý", tab: "security" });
+    expect(extRecs.map((r) => r.tone)).toEqual([...extRecs.map((r) => r.tone)].sort((a, b) => order(a) - order(b)));
+  });
+
+  it("pozná, kdy firma nabízí víc, než Mac potvrdil", () => {
+    expect(isExtended(policy)).toBe(false);
+    expect(isExtended(extended)).toBe(true);
+    expect(offersMore(extended, policy)).toBe(true);
+    expect(offersMore(extended, extended)).toBe(false);
+    // Kategorie, kterou Mac smí uklidit hned, nabídka „se souhlasem“ nerozšiřuje.
+    expect(offersMore({ auto: [], consent: ["appCaches"] }, policy)).toBe(false);
+  });
+
+  it("popíše nové zásahy a jejich výsledek", () => {
+    expect(commandTitle(command({ deep: true }), extended)).toBe("Hloubková údržba");
+    expect(commandTitle(command({ kind: "scan", full: true }), extended)).toBe("Úplná kontrola na dálku");
+    expect(commandStatus(command({ kind: "restart", state: "awaitingConsent", untilMs: NOW + 3_600_000 })).text).toMatch(
+      /^Uživatel odložil do \d{1,2}:\d{2}$/,
+    );
+    expect(commandStatus(command({ kind: "restart", state: "declined" })).text).toBe("Uživatel restart odmítl");
+    expect(commandStatus(command({ kind: "quitApps", count: 2, targets: ["a", "b", "c"] })).text).toBe("Ukončeno 2 z 3");
+    expect(commandStatus(command({ kind: "quitApps", count: 0, targets: ["a"] })).text).toBe("Aplikace neběžely");
+    expect(commandStatus(command({ kind: "update", note: "0.8.0" })).text).toBe("Instaluje se 0.8.0");
+    expect(commandStatus(command({ kind: "update" })).text).toBe("Aktuální");
+    expect(commandStatus(command({ kind: "deleteQuarantine", count: 1, targets: ["q1", "q2"] })).text).toBe("Smazáno 1 z 2");
+    expect(commandStatus(command({ kind: "policy", state: "declined" })).text).toBe("Uživatel rozšířenou správu odmítl");
+  });
+});
+
+function order(tone: string): number {
+  return tone === "alert" ? 0 : tone === "caution" ? 1 : 2;
+}

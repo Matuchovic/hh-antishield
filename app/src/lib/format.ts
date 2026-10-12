@@ -262,6 +262,12 @@ const ERRORS: Record<string, string> = {
   fleet_unknown_approval: "Žádost už neplatí.",
   fleet_save: "Nastavení firemní správy se nepodařilo uložit.",
   fleet_removed: "Schránka tento Mac nezná. Správce ho možná odebral; odpojte ho od firmy.",
+  fleet_automation: "Mac nedovolil AntiShieldu ovládat Finder, restart se nespustil. Uživatel může restartovat sám.",
+  fleet_restart_failed: "Systém restart nepřijal (možná ho zastavila aplikace s neuloženou prací).",
+  fleet_internal: "Na Macu se něco nečekaně pokazilo. Zkuste to znovu.",
+  interrupted: "Přerušeno: AntiShield na Macu se mezitím ukončil.",
+  scan_busy: "Na Macu dlouho běžela jiná kontrola.",
+  scan_timeout: "Kontrola na Macu nedoběhla včas.",
   rule_pack_signature_invalid: "Podpis sady pravidel je neplatný. Engine pravidla odmítl a kontrolu nespustí.",
   rule_pack_unknown_key: "Sada pravidel je podepsaná neznámým klíčem. Engine ji odmítl.",
   rule_pack_malformed: "Sada pravidel je poškozená. Engine ji odmítl.",
@@ -317,6 +323,14 @@ export function formatBytes(bytes: number): string {
   return `${value.toLocaleString("cs-CZ", { maximumFractionDigits: digits })} ${units[unit]}`;
 }
 
+/** Operační paměť jako v macOS (binární jednotky): 8 GiB → „8 GB“, 6,23 GiB → „6,2 GB“. */
+export function formatRam(bytes: number): string {
+  const gib = bytes / 2 ** 30;
+  if (gib < 1) return `${Math.round(bytes / 2 ** 20).toLocaleString("cs-CZ")} MB`;
+  const digits = gib >= 100 || Math.abs(gib - Math.round(gib)) < 0.05 ? 0 : 1;
+  return `${gib.toLocaleString("cs-CZ", { maximumFractionDigits: digits })} GB`;
+}
+
 export function formatDuration(ms: number): string {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds} s`;
@@ -366,10 +380,16 @@ const FLEET_KINDS: Record<string, string> = {
   scan: "kontrola",
   isolate: "izolace hrozeb",
   unenroll: "odebrání z firmy",
+  restart: "restart",
+  quitApps: "ukončení aplikací",
+  update: "aktualizace",
+  deleteQuarantine: "vysypání karantény",
+  policy: "rozšířená správa",
 };
 
 const FLEET_STATES: Record<string, string> = {
   awaitingConsent: "čeká na váš souhlas",
+  snoozed: "odloženo",
   done: "hotovo",
   declined: "odmítnuto",
   failed: "nepovedlo se",
@@ -436,7 +456,12 @@ export function describeAuditEvent(event: AuditEvent): { title: string; detail: 
       return { title, detail: parts.join(", ") };
     }
     case "fleet_command": {
-      const kind = FLEET_KINDS[String(d.kind ?? "")] ?? String(d.kind ?? "");
+      const kind =
+        d.deep === true
+          ? "hloubkový úklid"
+          : d.full === true
+            ? "úplná kontrola"
+            : (FLEET_KINDS[String(d.kind ?? "")] ?? String(d.kind ?? ""));
       const state = FLEET_STATES[String(d.state ?? "")] ?? "";
       const freed = Number(d.freedBytes ?? 0) + Number(d.trashedBytes ?? 0);
       return {

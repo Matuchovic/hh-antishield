@@ -1069,8 +1069,8 @@ const EVENT_FIELDS: [(&str, &[&str]); 12] = [
     ("quarantine_deleted", &["path"]),
     ("quarantine_failed", &["path", "code"]),
     ("scan_finished", &["outcome", "filesScanned", "findings"]),
-    ("rule_pack_installed", &["version"]),
-    ("rule_pack_rejected", &["code", "source"]),
+    ("rule_pack_installed", &["packId", "version"]),
+    ("rule_pack_rejected", &["code", "source", "message"]),
     ("audit_integrity_issue", &["detail", "sealed"]),
     (
         "fleet_command",

@@ -1,8 +1,27 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.7.0 vydána)
+Aktualizováno: 2026-10-12 (v0.8.0 připravena v PR, čeká na vydání)
 
 ## Stav
+- v0.8.0 (větev `claude/v0.8-deep-management`, zatím nevydaná): rozšířená
+  správa firemního Macu. Platí až po souhlasu uživatele Macu: správce
+  pošle žádost, uživatel vidí, co by správce navíc viděl a smí (nové
+  položky označené), a rozhodne. Zásahy: hloubková údržba (mezipaměti
+  aplikací, které neběží, i čerstvé; mezipaměti běžících aplikací až po
+  souhlasu se zavřením těch aplikací), Koš a velké staré soubory (vždy jen
+  se souhlasem; velké soubory vybírá uživatel a jejich názvy správce
+  nevidí), žádost o restart (uživatel může odložit o hodinu nebo do rána),
+  návrh ukončit aplikace (uživatel vybere), aktualizace AntiShieldu
+  a pravidel na dálku (jen podepsané vydání), úplná kontrola, mazání
+  z karantény. Detail Macu u správce má záložky Přehled (celkový stav
+  0–100 s důvody, doporučení s akcemi), Údržba, Zabezpečení (FileVault,
+  firewall a neviditelný režim, SIP, Gatekeeper, XProtect, automatické
+  a čekající aktualizace macOS, Time Machine, plný přístup k disku),
+  Výkon (procesor, paměť, odkládání, aplikace podle paměti, položky po
+  přihlášení), Hrozby (nálezy, karanténa, časová osa ochrany), Hardware
+  (čip, jádra, paměť, sériové číslo, baterie: cykly, kapacita, servis)
+  a Historie. Mac 0.7 dál funguje se základní správou; protokol zůstal
+  ve verzi 1.
 - v0.7.0 vydána 12. 10. 2026 (PR #11, Release: DMG universal, instalátor
   Windows, `latest.json` pro macOS Intel/Apple Silicon a Windows): firemní správa. Správce
   (CTO) na svém Macu vidí firemní Macy na mapě a v seznamu (ochrana,
@@ -66,11 +85,13 @@ Aktualizováno: 2026-10-12 (v0.7.0 vydána)
   složek, procesy a položky po spuštění, stav systému, audit, self-test.
 - `crates/antishield-cli` – `antishield` (scan, selftest, rules build/sign/
   verify, audit verify, fleet activation).
-- `app/` – Tauri 2 + React; 43 povolených příkazů, přísná CSP, služby na
+- `app/` – Tauri 2 + React; 44 povolených příkazů, přísná CSP, služby na
   pozadí (hlídání, pravidla po 6 h, plánovač, firemní správa), lišta,
   single-instance.
 - `crates/antishield-core/src/fleet.rs` – protokol firemní správy (klíče,
-  podpisy, šifrování, kódy, zásady, příkazy, zprávy); `app/src-tauri/src/
+  podpisy, šifrování, kódy, zásady, příkazy, zprávy, plán hloubkového
+  úklidu); `crates/antishield-core/src/inventory.rs` – hardware, baterie,
+  zabezpečení a výkon Macu pro zprávu správci; `app/src-tauri/src/
   fleet/` – klient schránky, stav správce a Macu, provedení příkazů;
   `relay/` – SQL schránky a postup pro aktivační kódy.
 
@@ -144,10 +165,29 @@ Aktualizováno: 2026-10-12 (v0.7.0 vydána)
   záměnu druhu kódu a prohození sousedních znaků kromě 0/Z). Mac přijme
   příkaz jen pro svou firmu a sebe, v platnosti (nejvýš 8 dní, tolerance
   hodin 10 min), poprvé (pamatuje si 30 dní) a nejvýš 30 za hodinu.
-- Zásady (co hned, co se souhlasem) se pevně uloží při připojení; změna jen
-  novým připojením. Velké soubory a Koš jsou mimo zásady natvrdo v jádru
-  i v aplikaci. Úklid na dálku bere jen předvybrané položky z vlastního
-  čerstvého skenu (běžící aplikace, nedávno použité, cloudové složky ne).
+- Zásady (co hned, co se souhlasem) se pevně uloží při připojení. Od 0.8
+  je rozšíří jen souhlas uživatele Macu se žádostí správce (příkaz
+  `policy`; Mac uloží jen to, co správce nabídl a uživatel potvrdil).
+  Velké soubory a Koš smí být jen „se souhlasem“, nikdy „hned“ (natvrdo
+  v jádru). Úklid na dálku bere jen položky z vlastního čerstvého skenu.
+- Rozšířená správa (0.8): restart a ukončení aplikací se uživatele zeptá
+  vždy. Hloubkový úklid smaže hned mezipaměti aplikací, které neběží
+  (mimo zapsané v posledních 2 min); mezipaměti běžící aplikace (podle
+  bundle ID nebo názvu) až po souhlasu se zavřením a jen ty, jejichž
+  aplikace pak opravdu neběží. Koš se vysype dřív, než do něj přijdou
+  soubory z úklidu (ty jde ještě vrátit). Ukončit jde jen běžící
+  aplikace mimo systémové a AntiShield. Odklad restartu 5 min–24 h, nejdéle
+  do vypršení žádosti. Restart na macOS přes Finder (Apple Event; poprvé
+  se systém zeptá na povolení ovládání Finderu). Aktualizace na dálku
+  počká na doběhnutí kontrol, instaluje jen podepsané vydání a jen
+  z Aplikací. Ochrany systému (FileVault, firewall…) AntiShield na dálku
+  nemění, jen ukáže stav a postup.
+- Podrobnosti ve zprávě (0.8) jen podle potvrzených zásad; zpráva se
+  vejde do 64 KiB (jinak ubírá události, karanténu, položky po přihlášení,
+  nálezy). Položky po přihlášení jen s názvem programu (bez cesty),
+  události jen s povolenými poli. Celkový stav 0–100 je součet srážek za
+  to, co Mac poslal; bez stavu zabezpečení se označí „Ze základních
+  údajů“. Operační paměť v binárních jednotkách jako v macOS.
 - Klíče správce i Macu jsou v souborech 0600 (`fleet/admin.json`,
   `fleet/member.json`). Keychain/Secure Enclave by s ad-hoc podpisem po
   každé aktualizaci chtěl heslo; po podpisu Developer ID přesunout.
@@ -159,6 +199,20 @@ Aktualizováno: 2026-10-12 (v0.7.0 vydána)
   (i s vypnutými oznámeními) a zásah jde do auditu.
 
 ## Testy (2026-10-12, lokálně)
+- 0.8: Rust 139 testů na Linuxu (jádro 103, CLI 2, aplikace 34; 2 živé
+  testy schránky zvlášť). Nové: zásady v2 (rozšíření jen souhlasem, Koš
+  a velké soubory nikdy „hned“, zpráva z 0.7 = základní zásady), hloubkový
+  úklid šetří běžící aplikace, rozbor baterie (Apple Silicon, Intel,
+  porucha), čekajících aktualizací, automatických aktualizací a Time
+  Machine, výkon bez cest; aplikace: rozšířená správa až po souhlasu,
+  podrobnosti podle zásad a do limitu schránky, odložený restart se vrátí
+  a vyprší, firma z 0.7 nabídne rozšířenou správu. UI: 37 testů vitest
+  (+5: ochrany systému, celkový stav, doporučení podle zásad, nové příkazy,
+  binární paměť), typecheck, build; 17 obrazovek v Chromiu s náhradou IPC
+  (správce i spravovaný Mac) bez chyb v konzoli. Sběr údajů na macOS
+  (sysctl, ioreg, softwareupdate, Time Machine), restart, ukončení
+  aplikací a aktualizaci na dálku ověří CI (překlad, clippy) a uživatel na
+  skutečném Macu.
 - 0.7: jádro 10 testů firemní správy (kódy, vazba klíčů, podvržené klíče,
   příkazy jen podepsané/pro tento Mac/v platnosti/poprvé/v zásadách,
   soubory uživatele a Koš nikdy, šifrování proti úpravám a záměně druhu
@@ -240,6 +294,9 @@ Aktualizováno: 2026-10-12 (v0.7.0 vydána)
   předaný uživateli v chatu; v repozitáři není). První kód (`…5AGD7`) měl
   kontrolní znak podle starého otisku; je zneplatněný (`uses_left = 0`)
   a nahrazený novým (otisk `43f8ab42…`).
+- 0.8 na skutečném Macu neověřena. Mac Viktórie Ladikové běží na 0.7.0:
+  po vydání 0.8 ho je potřeba aktualizovat (banner v aplikaci) a uživatelka
+  musí potvrdit rozšířenou správu; do té doby jde jen základní správa.
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 
@@ -249,7 +306,8 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
-Ověření na skutečných Macích (uživatel): na Macu správce založit firmu
-aktivačním kódem, pozvat Mac, na firemním Macu připojit, poslat kontrolu
-a úklid, souhlas s instalátory, odpojení. Volitelně tajná proměnná
-`ANTISHIELD_FLEET_ACTIVATION` pro celou cestu v CI.
+Po zeleném CI vydat 0.8.0 (se souhlasem uživatele). Pak na Macu Viktórie:
+aktualizovat na 0.8, správce požádá o rozšířenou správu, uživatelka
+potvrdí; ověřit detail (hardware, zabezpečení, výkon), hloubkovou údržbu,
+žádost o restart (povolit ovládání Finderu) a aktualizaci na dálku.
+Volitelně tajná proměnná `ANTISHIELD_FLEET_ACTIVATION` pro celou cestu v CI.

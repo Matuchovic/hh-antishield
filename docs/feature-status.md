@@ -1,4 +1,4 @@
-# Stav funkcí – v0.7
+# Stav funkcí – v0.8
 
 Platí pravidlo: aplikace nikdy netvrdí ochranu, kterou nemá. V0.2 hlásí
 „Váš Mac je hlídaný“, jen když skutečně běží hlídání složek i ověřené
@@ -50,7 +50,8 @@ Spouštění programů zatím neblokuje, proto nikdy neukáže „Chráněno“.
 | Bezpečnost systému (Gatekeeper, SIP, FileVault, firewall, XProtect; na Windows Defender a firewall) | jen čte stav a radí, nic nemění; přeloženo v CI, chybí ověření na zařízení |
 | Oznámení, ikona v liště, spuštění po přihlášení | přeloženo v CI pro macOS i Windows; chybí ruční test |
 | Animace a plynulost | animují se jen transformace a průhlednost, bez rozmazání v pohyblivých vrstvách; ověřeno v Chromiu (jádro WebView2) a WebKitGTK, na Macu ověří uživatel |
-| Firemní správa: správce vidí firemní Macy (ochrana, hrozby, disk, paměť, kolik jde uklidit) a posílá podepsané příkazy (kontrola, izolace hrozeb, úklid podle kategorií); Macy připojené kódem pozvánky, souhlas uživatele u instalátorů a zbytků, soubory uživatele a Koš nikdy | implementováno, testy protokolu se schránkou v paměti a samotest schránky v SQL; schránka na serveru nasazená zčásti (funkce s mazáním čekají na potvrzení); na skutečných Macích neověřeno |
+| Firemní správa: správce vidí firemní Macy (ochrana, hrozby, disk, paměť, kolik jde uklidit) a posílá podepsané příkazy (kontrola, izolace hrozeb, úklid podle kategorií); Macy připojené kódem pozvánky, souhlas uživatele u instalátorů a zbytků, soubory uživatele a Koš bez rozšířené správy nikdy | implementováno, testy protokolu se schránkou v paměti, samotest schránky v SQL a smlouva se skutečnou schránkou v CI; schránka nasazená celá; na skutečných Macích ověřeno jen připojení a základní stav |
+| Rozšířená správa (0.8, jen po souhlasu uživatele Macu): hloubková údržba (mezipaměti běžících aplikací až po souhlasu se zavřením), Koš a velké soubory se souhlasem (názvy souborů správce nevidí), žádost o restart s odkladem, návrh ukončit aplikace, aktualizace AntiShieldu a pravidel na dálku, úplná kontrola, mazání z karantény; detail Macu (zabezpečení systému, výkon a aplikace, hardware a baterie, karanténa a časová osa ochrany, celkový stav 0–100) | implementováno, unit testy jádra (zásady, plán úklidu, rozbor baterie, aktualizací a Time Machine) a aplikace (souhlas, rozsah zprávy, odklad restartu), 37 testů vitest, obrazovky v Chromiu; sběr údajů, restart přes Finder, ukončení aplikací a aktualizaci na dálku ověří uživatel na Macu |
 | Cesty delší než 1024 B na macOS | systém je neumí otevřít; skener je hlásí jako přeskočené |
 | Archivy RAR, 7z, gzip a vnořené archivy | rozpoznají se a započítají jako „nerozbalené“ (DMG a PKG se na macOS kontrolují) |
 | App Sandbox na macOS | vypnutý kvůli aktualizacím (sandboxovaná aplikace nesmí přepsat sama sebe); tvrzené prostředí zapnuté s výjimkou pro kód YARA-X překládaný za běhu |

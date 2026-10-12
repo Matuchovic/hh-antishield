@@ -22,7 +22,10 @@ import type {
   EngineInfo,
   ErrorDto,
   FleetAdmin,
+  FleetApprovalChoice,
+  FleetApprovalDetails,
   FleetCommandKind,
+  FleetCommandOptions,
   FleetInvite,
   FleetJoinPreview,
   FleetMembership,
@@ -78,13 +81,19 @@ export const api = {
     invoke<FleetAdmin>("fleet_create", { activation, fleetName, adminName }),
   fleetRefresh: () => invoke<FleetAdmin>("fleet_refresh"),
   fleetInvite: (name: string) => invoke<FleetInvite>("fleet_invite", { name }),
-  fleetCommand: (deviceIds: string[], kind: FleetCommandKind, categories: CleanCategory[]) =>
-    invoke<FleetAdmin>("fleet_command", { deviceIds, kind, categories }),
+  fleetCommand: (
+    deviceIds: string[],
+    kind: FleetCommandKind,
+    categories: CleanCategory[],
+    options?: FleetCommandOptions,
+  ) => invoke<FleetAdmin>("fleet_command", { deviceIds, kind, categories, options: options ?? null }),
   fleetRemoveDevice: (id: string) => invoke<FleetAdmin>("fleet_remove_device", { id }),
   fleetJoinPreview: (code: string) => invoke<FleetJoinPreview>("fleet_join_preview", { code }),
   fleetJoin: (code: string) => invoke<FleetMembership>("fleet_join", { code }),
   fleetLeave: () => invoke<void>("fleet_leave"),
-  fleetApprove: (id: string, approve: boolean) => invoke<FleetMembership>("fleet_approve", { id, approve }),
+  fleetApprove: (id: string, approve: boolean, choice?: FleetApprovalChoice) =>
+    invoke<FleetMembership>("fleet_approve", { id, approve, choice: choice ?? null }),
+  fleetApprovalDetails: (id: string) => invoke<FleetApprovalDetails>("fleet_approval_details", { id }),
 };
 
 /** Čištění: kategorie, kterou sken právě prochází. */
