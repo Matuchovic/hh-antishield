@@ -124,6 +124,14 @@ export function shares(policy: FleetPolicy, scope: FleetShare): boolean {
   return policy.share?.includes(scope) ?? false;
 }
 
+/** Od této verze AntiShield na Macu rozumí žádosti o rozšířenou správu. */
+export const EXTENDED_SINCE = "0.8.0";
+
+/** Rozumí Mac rozšířené správě? Starší žádost odmítne, proto se mu nenabízí. */
+export function supportsExtended(report: FleetReport | null): boolean {
+  return report !== null && compareVersions(report.appVersion, EXTENDED_SINCE) >= 0;
+}
+
 /** Má Mac potvrzenou rozšířenou správu (aspoň něco navíc)? */
 export function isExtended(policy: FleetPolicy): boolean {
   return (policy.actions?.length ?? 0) > 0 || (policy.share?.length ?? 0) > 0;
@@ -670,7 +678,13 @@ export function recommendations(device: FleetDevice, latestVersion: string, now 
       tone: "caution",
       title: appOld ? `AntiShield ${r.appVersion} je starší` : "Pravidla jsou stará",
       detail: appOld
-        ? `Nejnovější verze je ${latestVersion}. ${canUpdate ? "Aktualizace se ověří podpisem a aplikace se sama restartuje." : "Na dálku ji jde spustit s rozšířenou správou."}`
+        ? `Nejnovější verze je ${latestVersion}. ${
+            canUpdate
+              ? "Aktualizace se ověří podpisem a aplikace se sama restartuje."
+              : supportsExtended(r)
+                ? "Na dálku ji jde spustit s rozšířenou správou."
+                : "Uživatel ji nainstaluje tlačítkem Aktualizovat v AntiShieldu."
+          }`
         : `Naposledy ověřena ${agoText(r.rulesCheckedAtMs ?? now, now)}. ${canUpdate ? "Aktualizace stáhne nová a ověří jejich podpis." : "Mac je stáhne sám, jakmile bude online."}`,
       action: canUpdate ? { label: "Aktualizovat", kind: "update" } : undefined,
     });

@@ -22,6 +22,7 @@ import {
   recommendations,
   securityChecks,
   shortName,
+  supportsExtended,
 } from "./fleet";
 import type { FleetCommand, FleetDevice, FleetPolicy, FleetReport, FleetSecurity } from "./types";
 
@@ -260,6 +261,21 @@ describe("detail firemního Macu", () => {
     expect(extRecs.find((r) => r.id === "restart")?.action).toEqual({ label: "Požádat o restart", kind: "restart" });
     expect(extRecs.find((r) => r.id === "security-firewall")).toMatchObject({ title: "Firewall je vypnutý", tab: "security" });
     expect(extRecs.map((r) => r.tone)).toEqual([...extRecs.map((r) => r.tone)].sort((a, b) => order(a) - order(b)));
+  });
+
+  it("rozšířenou správu nabídne jen Macu, který jí rozumí", () => {
+    expect(supportsExtended(report({ appVersion: "0.7.0" }))).toBe(false);
+    expect(supportsExtended(report({ appVersion: "0.8.0" }))).toBe(true);
+    expect(supportsExtended(report({ appVersion: "0.10.1" }))).toBe(true);
+    expect(supportsExtended(null)).toBe(false);
+    const old = report({ appVersion: "0.7.0" });
+    expect(recommendations(device({ report: old }), "0.8.0", NOW).find((r) => r.id === "update")?.detail).toBe(
+      "Nejnovější verze je 0.8.0. Uživatel ji nainstaluje tlačítkem Aktualizovat v AntiShieldu.",
+    );
+    const basic08 = report({ appVersion: "0.8.0" });
+    expect(recommendations(device({ report: basic08 }), "0.8.1", NOW).find((r) => r.id === "update")?.detail).toBe(
+      "Nejnovější verze je 0.8.1. Na dálku ji jde spustit s rozšířenou správou.",
+    );
   });
 
   it("pozná, kdy firma nabízí víc, než Mac potvrdil", () => {
