@@ -228,11 +228,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let code = OneTimeCode::generate(ACTIVATION_PREFIX)?;
             println!("Aktivační kód: {}", code.display());
             println!("Do schránky (SQL, ukládá se jen otisk kódu):");
-            let note: String = note
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(200)
-                .collect();
+            let note: String = note.chars().filter(|c| !c.is_control()).take(200).collect();
             println!(
                 "insert into antishield_fleet.activations (code_hash, note, expires_at, uses_left) values \
                  (decode('{}', 'hex'), '{}', now() + interval '{} days', {});",
