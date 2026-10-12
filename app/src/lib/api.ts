@@ -21,6 +21,12 @@ import type {
   Settings,
   EngineInfo,
   ErrorDto,
+  FleetAdmin,
+  FleetCommandKind,
+  FleetInvite,
+  FleetJoinPreview,
+  FleetMembership,
+  FleetState,
   ProtectionSummary,
   ScanEvent,
   ScanSummary,
@@ -66,6 +72,18 @@ export const api = {
   speedReport: () => invoke<SpeedReport>("speed_report"),
   speedQuit: (pid: number) => invoke<QuitOutcome>("speed_quit", { pid }),
   speedStartup: (id: string, enabled: boolean) => invoke<SpeedReport>("speed_startup", { id, enabled }),
+  // Firemní správa: správce (podepisuje příkazy) i spravovaný Mac.
+  fleetState: () => invoke<FleetState>("fleet_state"),
+  fleetCreate: (fleetName: string, adminName: string) => invoke<FleetAdmin>("fleet_create", { fleetName, adminName }),
+  fleetRefresh: () => invoke<FleetAdmin>("fleet_refresh"),
+  fleetInvite: (name: string) => invoke<FleetInvite>("fleet_invite", { name }),
+  fleetCommand: (deviceIds: string[], kind: FleetCommandKind, categories: CleanCategory[]) =>
+    invoke<FleetAdmin>("fleet_command", { deviceIds, kind, categories }),
+  fleetRemoveDevice: (id: string) => invoke<FleetAdmin>("fleet_remove_device", { id }),
+  fleetJoinPreview: (code: string) => invoke<FleetJoinPreview>("fleet_join_preview", { code }),
+  fleetJoin: (code: string) => invoke<FleetMembership>("fleet_join", { code }),
+  fleetLeave: () => invoke<void>("fleet_leave"),
+  fleetApprove: (id: string, approve: boolean) => invoke<FleetMembership>("fleet_approve", { id, approve }),
 };
 
 /** Čištění: kategorie, kterou sken právě prochází. */
@@ -82,7 +100,7 @@ export function onUpdateProgress(handler: (progress: UpdateProgress) => void): P
 }
 
 /** Události backendu pro rozhraní. */
-export function onAppEvent<T>(name: "engine-ready" | "protection-event" | "rules-updated" | "quarantine-changed" | "navigate" | "scheduled-scan" | "access-changed" | "stories-changed", handler: (payload: T) => void): Promise<UnlistenFn> {
+export function onAppEvent<T>(name: "engine-ready" | "protection-event" | "rules-updated" | "quarantine-changed" | "navigate" | "scheduled-scan" | "access-changed" | "stories-changed" | "fleet-changed", handler: (payload: T) => void): Promise<UnlistenFn> {
   return listen<T>(name, (message) => handler(message.payload));
 }
 

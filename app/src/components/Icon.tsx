@@ -89,6 +89,15 @@ const PATHS = {
     </>
   ),
   sparkle: <path d="M12 3v4m0 10v4M3 12h4m10 0h4M6 6l2.5 2.5m7 7L18 18M6 18l2.5-2.5m7-7L18 6" />,
+  laptop: <path d="M5 6.5A1.5 1.5 0 0 1 6.5 5h11A1.5 1.5 0 0 1 19 6.5V15H5zM2.5 18.5h19" />,
+  building: <path d="M4 21V5l8-2v18m0-11h8v11M7.5 8h1m-1 4h1m-1 4h1m7-2h1m-1 3h1M2 21h20" />,
+  copy: (
+    <>
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+    </>
+  ),
+  plus: <path d="M12 5v14M5 12h14" />,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

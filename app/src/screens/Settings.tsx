@@ -1,8 +1,10 @@
+import { FleetSettingsPanel } from "../components/FleetMember";
 import { Icon } from "../components/Icon";
 import { Toggle } from "../components/Toggle";
 import { WEEKDAYS, capitalize, relativeTime, translateReason } from "../lib/format";
 import type { PresetScan, Schedule } from "../lib/types";
 import type { AntiShield } from "../lib/useAntiShield";
+import type { Fleet } from "../lib/useFleet";
 import type { Updater } from "../lib/useUpdater";
 
 const SCHEDULES: { value: Schedule; label: string }[] = [
@@ -11,7 +13,17 @@ const SCHEDULES: { value: Schedule; label: string }[] = [
   { value: "weekly", label: "Týdně" },
 ];
 
-export function Settings({ app, updater }: { app: AntiShield; updater: Updater }) {
+export function Settings({
+  app,
+  updater,
+  fleet,
+  onOpenFleet,
+}: {
+  app: AntiShield;
+  updater: Updater;
+  fleet: Fleet;
+  onOpenFleet: () => void;
+}) {
   const { settings, runtime } = app;
   if (!settings) {
     return <p className="muted">Načítám nastavení…</p>;
@@ -187,6 +199,8 @@ export function Settings({ app, updater }: { app: AntiShield; updater: Updater }
           </p>
         ) : null}
       </section>
+
+      <FleetSettingsPanel fleet={fleet} onOpenFleet={onOpenFleet} />
 
       <section className="panel" aria-labelledby="s-look">
         <h2 id="s-look">Zvuk a animace</h2>

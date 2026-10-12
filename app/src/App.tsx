@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AccessPrompt } from "./components/AccessPrompt";
+import { FleetApprovals } from "./components/FleetMember";
 import { Intro } from "./components/Intro";
 import { Sidebar, type Screen } from "./components/Sidebar";
 import { StorySheet } from "./components/StorySheet";
@@ -7,10 +8,12 @@ import { UpdateBanner } from "./components/UpdateBanner";
 import { onAppEvent } from "./lib/api";
 import { describeError } from "./lib/format";
 import { useAntiShield } from "./lib/useAntiShield";
+import { useFleet } from "./lib/useFleet";
 import { useUpdater } from "./lib/useUpdater";
 import { About } from "./screens/About";
 import { Care } from "./screens/Care";
 import { Events } from "./screens/Events";
+import { Fleet } from "./screens/Fleet";
 import { Overview } from "./screens/Overview";
 import { Protection } from "./screens/Protection";
 import { Quarantine } from "./screens/Quarantine";
@@ -28,6 +31,7 @@ const SCREENS: Screen[] = [
   "quarantine",
   "systemcare",
   "care",
+  "fleet",
   "settings",
   "about",
 ];
@@ -39,6 +43,7 @@ function prefersReducedMotion(): boolean {
 export function App() {
   const app = useAntiShield();
   const updater = useUpdater();
+  const fleet = useFleet();
   const [screen, setScreen] = useState<Screen>("overview");
   const [intro, setIntro] = useState<"pending" | "show" | "done">("pending");
   const settings = app.settings;
@@ -105,10 +110,20 @@ export function App() {
         return <SystemSecurity app={app} />;
       case "care":
         return <Care app={app} />;
+      case "fleet":
+        return fleet.admin ? (
+          <Fleet
+            fleet={fleet.admin}
+            onUpdate={fleet.setAdmin}
+            still={Boolean(settings?.reducedMotion) || prefersReducedMotion()}
+          />
+        ) : (
+          <Overview app={app} onNavigate={setScreen} />
+        );
       case "events":
         return <Events app={app} />;
       case "settings":
-        return <Settings app={app} updater={updater} />;
+        return <Settings app={app} updater={updater} fleet={fleet} onOpenFleet={() => setScreen("fleet")} />;
       case "about":
         return <About app={app} updater={updater} />;
     }
@@ -123,10 +138,13 @@ export function App() {
         level={app.protection?.level ?? null}
         scanRunning={app.scan.running}
         quarantineCount={app.quarantine.length}
+        fleetAdmin={Boolean(fleet.admin)}
+        managedBy={fleet.member?.fleetName ?? null}
       />
       {app.scan.running ? <div className="scan-line" aria-hidden="true" /> : null}
       <main className="content">
         <UpdateBanner updater={updater} />
+        <FleetApprovals fleet={fleet} />
         {app.error ? (
           <div className="error-bar" role="alert">
             <span>{describeError(app.error)}</span>
