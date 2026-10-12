@@ -138,7 +138,9 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   správce a šifrují se pro Mac (X25519 + HKDF-SHA256 + ChaCha20-Poly1305,
   nový klíč pro každou zprávu); zprávy Maců podepisuje klíč Macu a šifrují
   se pro správce. Klíče se při připojení svazují HMAC jednorázovým kódem
-  pozvánky (120 bitů, schránka zná jen odvozený identifikátor). Mac přijme
+  pozvánky (120 bitů, schránka zná jen odvozený identifikátor; kontrolní
+  znak Luhn mod 32 přes prefix i data pozná každý překlep v jednom znaku,
+  záměnu druhu kódu a prohození sousedních znaků kromě 0/Z). Mac přijme
   příkaz jen pro svou firmu a sebe, v platnosti (nejvýš 8 dní, tolerance
   hodin 10 min), poprvé (pamatuje si 30 dní) a nejvýš 30 za hodinu.
 - Zásady (co hned, co se souhlasem) se pevně uloží při připojení; změna jen
@@ -175,7 +177,12 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   testy neinstalovaly poskytovatele TLS – aplikace ho má v `main`, opraveno
   v testech). V Supabase po nasazení kouřový test všech funkcí jako `anon`
   v transakci, která se vrátila; schránka zůstala prázdná. Z kontejneru na
-  supabase.co přes HTTP nejde, `live_relay_contract` proto běží v CI.
+  supabase.co přes HTTP nejde, `live_relay_contract` proto běží v CI
+  (poprvé zelený proti skutečné schránce).
+- 0.7 kódy: CI jednou spadlo na testu překlepu – kontrolní znak z otisku
+  (5 bitů) propustil 1 překlep z 32. Nahrazen Luhnem mod 32; test teď
+  zkouší všech 775 jednoznakových překlepů, prohození sousedů a záměnu
+  druhu kódu (40 opakování s náhodnými kódy bez chyby).
 - Rust: 128 testů na Linuxu (jádro 98, CLI 2, aplikace 28; 2 živé testy
   schránky se spouští zvlášť) + test PKG/DMG jen na macOS, clippy
   `-D warnings`, rustfmt. Nové: čištění (nález
@@ -229,7 +236,9 @@ Aktualizováno: 2026-10-12 (v0.7.0, rozpracováno)
   jsou záměrně bez přístupu) a „SECURITY DEFINER volatelná rolí anon“
   (záměr: funkce jsou API schránky a samy ověřují tokeny).
 - Aktivační kód pro správce je vydaný (jednorázový, platí do 11. 11. 2026,
-  předaný uživateli v chatu; v repozitáři není).
+  předaný uživateli v chatu; v repozitáři není). První kód (`…5AGD7`) měl
+  kontrolní znak podle starého otisku; je zneplatněný (`uses_left = 0`)
+  a nahrazený novým (otisk `43f8ab42…`).
 - Soukromé klíče `hh-test-2026-10` a `hh-rules-2026-10` jsou jen v dočasném
   úložišti session; produkční patří do GitHub Secrets + záloha u uživatele.
 

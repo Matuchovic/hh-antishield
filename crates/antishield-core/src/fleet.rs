@@ -416,14 +416,25 @@ fn crockford() -> &'static Encoding {
     })
 }
 
-fn checksum(prefix: &str, secret: &[u8; 15]) -> char {
-    let mut hash = Sha256::new();
-    hash.update(prefix.as_bytes());
-    hash.update(secret);
-    let index = usize::from(hash.finalize()[0] & 31);
+/// Kontrolní znak (Luhn mod 32) přes prefix i data: odhalí každý překlep
+/// v jednom znaku, záměnu druhu kódu a prohození sousedních znaků (kromě
+/// dvojice 0/Z). Otisk by jeden překlep ze 32 propustil.
+fn checksum(prefix: &str, data: &str) -> char {
+    const N: usize = 32;
+    let sum: usize = prefix
+        .chars()
+        .chain(data.chars())
+        .rev()
+        .enumerate()
+        .map(|(i, c)| {
+            let value = CROCKFORD.find(c).unwrap_or(0);
+            let addend = if i % 2 == 0 { value * 2 } else { value };
+            addend / N + addend % N
+        })
+        .sum();
     CROCKFORD
         .as_bytes()
-        .get(index)
+        .get((N - sum % N) % N)
         .copied()
         .map_or('0', char::from)
 }
@@ -501,7 +512,7 @@ impl OneTimeCode {
             .map_err(|_| FleetError::InvalidCode)?
             .try_into()
             .map_err(|_| FleetError::InvalidCode)?;
-        if !check.starts_with(checksum(prefix, &secret)) {
+        if !check.starts_with(checksum(prefix, data)) {
             return Err(FleetError::InvalidCode);
         }
         Ok(Self { prefix, secret })
@@ -509,12 +520,9 @@ impl OneTimeCode {
 
     /// Podoba bez pomlček (tak ji posílá aplikace schránce).
     pub fn canonical(&self) -> String {
-        format!(
-            "{}{}{}",
-            self.prefix,
-            crockford().encode(&self.secret),
-            checksum(self.prefix, &self.secret)
-        )
+        let data = crockford().encode(&self.secret);
+        let check = checksum(self.prefix, &data);
+        format!("{}{data}{check}", self.prefix)
     }
 
     /// Podoba pro lidi: prefix a pět skupin po pěti znacích.
@@ -1128,6 +1136,13 @@ mod tests {
         let shown = code.display();
         assert!(shown.starts_with("HHF1-"));
         assert_eq!(shown.len(), 4 + 5 * 6);
+        // Kontrolní znak počítá i s prefixem, ten musí být v abecedě.
+        assert!(
+            INVITE_PREFIX
+                .chars()
+                .chain(ACTIVATION_PREFIX.chars())
+                .all(|c| CROCKFORD.contains(c))
+        );
         let typed = shown
             .to_lowercase()
             .replace('-', " ")
@@ -1136,16 +1151,41 @@ mod tests {
         let parsed = OneTimeCode::parse(INVITE_PREFIX, &typed).unwrap();
         assert_eq!(parsed.canonical(), code.canonical());
         assert_eq!(parsed.token_id(), code.token_id());
-        // Překlep v jednom znaku odhalí kontrolní znak (nebo dekódování).
-        let mut chars: Vec<char> = code.canonical().chars().collect();
-        chars[6] = if chars[6] == 'A' { 'B' } else { 'A' };
-        let typo: String = chars.into_iter().collect();
-        assert_eq!(
-            OneTimeCode::parse(INVITE_PREFIX, &typo).unwrap_err(),
-            FleetError::InvalidCode
-        );
-        // Jiný druh kódu se nezamění.
+        // Každý překlep v jednom znaku (i v kontrolním) odhalí kontrolní znak.
+        let canonical = code.canonical();
+        let symbols: Vec<char> = canonical.chars().collect();
+        for position in INVITE_PREFIX.len()..symbols.len() {
+            for other in CROCKFORD.chars().filter(|c| *c != symbols[position]) {
+                let mut typo = symbols.clone();
+                typo[position] = other;
+                let typo: String = typo.into_iter().collect();
+                assert_eq!(
+                    OneTimeCode::parse(INVITE_PREFIX, &typo).unwrap_err(),
+                    FleetError::InvalidCode,
+                    "{typo}"
+                );
+            }
+        }
+        // Prohození sousedních znaků taky (Luhn nepozná jen dvojici 0/Z).
+        for position in INVITE_PREFIX.len()..symbols.len() - 1 {
+            let pair = (symbols[position], symbols[position + 1]);
+            if pair.0 == pair.1 || matches!(pair, ('0', 'Z') | ('Z', '0')) {
+                continue;
+            }
+            let mut swapped = symbols.clone();
+            swapped.swap(position, position + 1);
+            let swapped: String = swapped.into_iter().collect();
+            assert!(
+                OneTimeCode::parse(INVITE_PREFIX, &swapped).is_err(),
+                "{swapped}"
+            );
+        }
+        // Jiný druh kódu se nezamění, ani se stejným tělem.
         assert!(OneTimeCode::parse(ACTIVATION_PREFIX, &shown).is_err());
+        let body = &canonical[INVITE_PREFIX.len()..];
+        assert!(
+            OneTimeCode::parse(ACTIVATION_PREFIX, &format!("{ACTIVATION_PREFIX}{body}")).is_err()
+        );
         assert!(OneTimeCode::parse(INVITE_PREFIX, "HHF1-ABC").is_err());
     }
 
