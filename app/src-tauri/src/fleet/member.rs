@@ -8,8 +8,8 @@ use antishield_core::fleet::{
     CommandKind, CommandResult, DEVICE_BUNDLE, DeviceBundle, EventReport, FleetError,
     HardwareReport, INVITE_PREFIX, Identity, IdentitySecret, LEAVE, LastScan, LeaveNotice,
     MAX_SEALED_CHARS, Membership, MemoryState, OneTimeCode, PerformanceReport, Policy, PublicKeys,
-    QuarantineReport, REPORT, RESULT, Report, ResultState, SecurityReport, ShareScope,
-    ThreatReport, VERSION,
+    QuarantineReport, REPORT, RESULT, RemoteAction, Report, ResultState, SecurityReport,
+    ShareScope, ThreatReport, VERSION,
 };
 use antishield_core::speed::DiskInfo;
 use antishield_core::status::ProtectionLevel;
@@ -363,6 +363,22 @@ impl MemberState {
         };
         quarantine.truncate(proto::MAX_REPORT_QUARANTINE);
         events.truncate(proto::MAX_REPORT_EVENTS);
+        // Se základními zásadami (stejnými jako v 0.7) má zpráva tvar z 0.7:
+        // správce s 0.7 neznámá pole odmítne a zprávu by zahodil.
+        let basic = self.policy == Policy::basic();
+        let cleanup = input.cleanup.map(|mut estimate| {
+            if !self.policy.allows(RemoteAction::DeepClean) {
+                estimate.deep = None;
+            }
+            for category in &mut estimate.categories {
+                if !self.policy.auto.contains(&category.category)
+                    && !self.policy.consent.contains(&category.category)
+                {
+                    category.items = 0;
+                }
+            }
+            estimate
+        });
         let mut report = Report {
             v: VERSION,
             device_id: self.device_id.clone(),
@@ -382,8 +398,8 @@ impl MemberState {
             disk: input.disk,
             memory: input.memory,
             uptime_secs: input.uptime_secs,
-            cleanup: input.cleanup,
-            policy: Some(self.policy.clone()),
+            cleanup,
+            policy: (!basic).then(|| self.policy.clone()),
             hardware: input.hardware.filter(|_| shares(ShareScope::Hardware)),
             security: input.security.filter(|_| shares(ShareScope::Security)),
             performance: input

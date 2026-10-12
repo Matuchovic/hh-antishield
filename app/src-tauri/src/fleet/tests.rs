@@ -254,7 +254,7 @@ impl MemoryRelay {
 
 fn report_input(model: &str) -> ReportInput {
     ReportInput {
-        app_version: "0.7.0".into(),
+        app_version: "0.8.0".into(),
         os_version: "macOS 26.0.1".into(),
         model: model.into(),
         protection: ProtectionLevel::Monitored,
@@ -1329,7 +1329,9 @@ fn report_details_follow_the_policy_and_fit_the_relay() {
     assert!(report.hardware.is_none() && report.security.is_none());
     assert!(report.performance.is_none());
     assert!(report.quarantine.is_empty() && report.events.is_empty());
-    assert_eq!(report.policy, Some(Policy::basic()));
+    // Základní zásady se neposílají (zpráva má tvar z 0.7); správce je doplní.
+    assert_eq!(report.policy, None);
+    assert_eq!(report.accepted_policy(), Policy::basic());
 
     // Rozšířená správa: podrobnosti dorazí, příliš velká zpráva se zkrátí.
     tomas.policy = Policy::standard();
@@ -1395,4 +1397,134 @@ fn a_fleet_from_0_7_offers_extended_management_to_new_macs() {
         world.admin.view(&RelayStatus::default(), NOW).devices[0].policy,
         Policy::basic()
     );
+}
+
+/// Smíšené verze: Mac s 0.8 a základními zásadami posílá zprávu ve tvaru
+/// z 0.7 (správce s 0.7 neznámá pole odmítá), a Macu s 0.7 správce
+/// rozšířenou správu nenabídne, protože by žádosti nerozuměl.
+#[test]
+fn mixed_versions_keep_working_until_both_macs_update() {
+    use antishield_core::fleet::{CategoryBytes, CleanupEstimate, DeepEstimate};
+    const REPORT_0_7: [&str; 19] = [
+        "v",
+        "deviceId",
+        "fleetId",
+        "seq",
+        "createdAtMs",
+        "appVersion",
+        "osVersion",
+        "model",
+        "protection",
+        "protectionNote",
+        "rulesVersion",
+        "rulesCheckedAtMs",
+        "lastScan",
+        "threats",
+        "quarantined",
+        "disk",
+        "memory",
+        "uptimeSecs",
+        "cleanup",
+    ];
+    let keys = |value: &serde_json::Value| -> Vec<String> {
+        value
+            .as_object()
+            .map(|o| o.keys().cloned().collect())
+            .unwrap_or_default()
+    };
+    let input = |version: &str| {
+        let mut input = report_input("MacBook Air (Apple M2)");
+        input.app_version = version.into();
+        input.cleanup = Some(CleanupEstimate {
+            measured_at_ms: NOW,
+            categories: vec![
+                CategoryBytes {
+                    category: CleanCategory::AppCaches,
+                    bytes: 700,
+                    items: 0,
+                },
+                CategoryBytes {
+                    category: CleanCategory::Trash,
+                    bytes: 94,
+                    items: 41,
+                },
+                CategoryBytes {
+                    category: CleanCategory::LargeFiles,
+                    bytes: 6_800,
+                    items: 3,
+                },
+            ],
+            deep: Some(DeepEstimate {
+                now_bytes: 2_100,
+                apps_bytes: 1_300,
+                apps: 3,
+            }),
+        });
+        input
+    };
+    let mut world = World::new();
+    let mut viktoria = world.enroll("Viktória Ladiková");
+    let device = viktoria.device_id.clone();
+    let send_report = |world: &mut World, viktoria: &mut MemberState, version: &str, at: u64| {
+        let sealed = viktoria.report(input(version), at).unwrap();
+        world
+            .relay
+            .report(&device, &viktoria.device_token, &sealed)
+            .unwrap();
+        world.sync();
+        world.admin.devices[0].report.clone().unwrap()
+    };
+
+    // 0.8 se základními zásadami: jen pole, která zná 0.7.
+    viktoria.policy = Policy::basic();
+    let report = send_report(&mut world, &mut viktoria, "0.8.0", NOW);
+    let json = serde_json::to_value(&report).unwrap();
+    for key in keys(&json) {
+        assert!(REPORT_0_7.contains(&key.as_str()), "0.7 rejects `{key}`");
+    }
+    for key in keys(&json["cleanup"]) {
+        assert!(
+            ["measuredAtMs", "categories"].contains(&key.as_str()),
+            "0.7 rejects `cleanup.{key}`"
+        );
+    }
+    for category in json["cleanup"]["categories"].as_array().unwrap() {
+        for key in keys(category) {
+            assert!(
+                ["category", "bytes"].contains(&key.as_str()),
+                "0.7 rejects `{key}`"
+            );
+        }
+    }
+    assert_eq!(report.accepted_policy(), Policy::basic());
+
+    // S rozšířenou správou jdou i zásady, hloubkový odhad a počty položek.
+    viktoria.policy = Policy::standard();
+    let report = send_report(&mut world, &mut viktoria, "0.8.0", NOW + 1);
+    assert_eq!(report.policy, Some(Policy::standard()));
+    let cleanup = report.cleanup.unwrap();
+    assert_eq!(cleanup.deep.map(|d| d.apps), Some(3));
+    let trash = cleanup
+        .categories
+        .iter()
+        .find(|c| c.category == CleanCategory::Trash)
+        .map(|c| c.items);
+    assert_eq!(trash, Some(41));
+
+    // Mac s 0.7: žádost o rozšířenou správu by odmítl, správce ji nepošle.
+    viktoria.policy = Policy::basic();
+    send_report(&mut world, &mut viktoria, "0.7.0", NOW + 2);
+    let ask = |world: &World| {
+        world.admin.command(
+            &device,
+            CommandKind::Policy,
+            &[],
+            &CommandOptions::default(),
+            NOW,
+        )
+    };
+    assert!(matches!(ask(&world), Err(FleetError::NotAllowed(_))));
+    // Po aktualizaci Macu na 0.8 už ano.
+    send_report(&mut world, &mut viktoria, "0.8.0", NOW + 3);
+    assert!(ask(&world).is_ok());
 }

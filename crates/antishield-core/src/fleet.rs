@@ -909,6 +909,17 @@ fn valid_quarantine_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
 }
 
+/// Rozumí AntiShield této verze rozšířené správě (příkaz `policy` a další
+/// zásahy z 0.8)? Starší Mac takový příkaz nepřečte a odmítne.
+pub fn supports_extended(app_version: &str) -> bool {
+    let mut parts = app_version
+        .split(['.', '-', '+'])
+        .map(|part| part.parse::<u64>().unwrap_or(0));
+    let major = parts.next().unwrap_or(0);
+    let minor = parts.next().unwrap_or(0);
+    (major, minor) >= (0, 8)
+}
+
 /// Volby příkazu sedí k jeho druhu a k zásadám Macu. Stejné meze kontroluje
 /// správce před odesláním i Mac po přijetí.
 pub fn check_command(command: &Command, policy: &Policy) -> Result<(), FleetError> {
@@ -2651,5 +2662,15 @@ mod tests {
         );
         assert!(read_json::<IdentitySecret>(&path, 10).is_err());
         assert!(format!("{:?}", identity.secret()).contains('…'));
+    }
+
+    #[test]
+    fn extended_management_needs_antishield_0_8() {
+        for old in ["0.7.0", "0.7.9", "0.1.2", "", "x"] {
+            assert!(!supports_extended(old), "{old}");
+        }
+        for new in ["0.8.0", "0.8.1-beta.1", "0.10.0", "1.0.0"] {
+            assert!(supports_extended(new), "{new}");
+        }
     }
 }

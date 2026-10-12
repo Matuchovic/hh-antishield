@@ -252,6 +252,16 @@ impl AdminState {
         command.full = options.full;
         command.targets = options.targets.clone();
         if kind == CommandKind::Policy {
+            // Mac se starším AntiShieldem (nebo bez zprávy) žádosti nerozumí.
+            let supported = device
+                .report
+                .as_ref()
+                .is_some_and(|r| proto::supports_extended(&r.app_version));
+            if !supported {
+                return Err(FleetError::NotAllowed(
+                    "the Mac needs AntiShield 0.8 or newer".into(),
+                ));
+            }
             command.policy = Some(self.policy.clone());
         }
         let accepted = device

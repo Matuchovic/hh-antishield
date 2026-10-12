@@ -28,6 +28,8 @@ import {
   recommendations,
   securityChecks,
   shares,
+  supportsExtended,
+  EXTENDED_SINCE,
   type DeviceTab,
   type FleetTone,
   type Health,
@@ -280,7 +282,7 @@ export function FleetDevicePage({
         </div>
       </header>
 
-      {!device.left && (offersMore(fleet.policy, policy) || offer?.state === "awaitingConsent") ? (
+      {!device.left && report && (offersMore(fleet.policy, policy) || offer?.state === "awaitingConsent") ? (
         <ExtendedOffer device={device} fleet={fleet} now={now} busy={disabled} onSend={onSend} />
       ) : null}
 
@@ -355,26 +357,32 @@ function ExtendedOffer({
   const waiting = offer && commandInProgress(offer);
   const declined = offer?.state === "declined";
   const first = device.name.split(/\s+/)[0] ?? device.name;
+  // Starší AntiShield žádosti nerozumí: nejdřív aktualizace na Macu.
+  const outdated = device.report && !supportsExtended(device.report) ? device.report.appVersion : null;
   return (
     <section className={`panel device-offer${waiting ? " is-waiting" : ""}`} aria-labelledby="offer-title">
       <span className="device-offer-icon" aria-hidden="true">
-        <Icon name="key" size={22} />
+        <Icon name={outdated ? "download" : "key"} size={22} />
       </span>
       <div className="device-offer-text">
         <h2 id="offer-title">
-          {waiting
-            ? `Čeká na souhlas: ${first} rozhoduje o rozšířené správě`
-            : declined
-              ? `${first} rozšířenou správu odmítl(a) ${agoText(offer.updatedAtMs, now)}`
-              : "Rozšířená správa zatím není potvrzená"}
+          {outdated
+            ? `Rozšířená správa potřebuje na Macu AntiShield ${EXTENDED_SINCE.replace(/\.0$/, "")} nebo novější`
+            : waiting
+              ? `Čeká na souhlas: ${first} rozhoduje o rozšířené správě`
+              : declined
+                ? `${first} rozšířenou správu odmítl(a) ${agoText(offer.updatedAtMs, now)}`
+                : "Rozšířená správa zatím není potvrzená"}
         </h2>
         <p className="muted">
-          {waiting
-            ? `Žádost odešla ${agoText(offer.sentAtMs, now)}. ${offer.state === "queued" ? "Mac je offline, žádost počká." : "Uživatel ji vidí v AntiShieldu."}`
-            : "Přidá podrobnosti o hardwaru, zabezpečení, výkonu a hrozbách, hloubkový úklid, úplnou kontrolu, mazání z karantény a aktualizace. Restart, ukončení aplikací, Koš a velké soubory vždy jen se souhlasem uživatele."}
+          {outdated
+            ? `Na Macu běží AntiShield ${outdated}, který žádosti nerozumí. Ať ${first} v AntiShieldu klikne na Aktualizovat; pak tu o rozšířenou správu požádáte.`
+            : waiting
+              ? `Žádost odešla ${agoText(offer.sentAtMs, now)}. ${offer.state === "queued" ? "Mac je offline, žádost počká." : "Uživatel ji vidí v AntiShieldu."}`
+              : "Přidá podrobnosti o hardwaru, zabezpečení, výkonu a hrozbách, hloubkový úklid, úplnou kontrolu, mazání z karantény a aktualizace. Restart, ukončení aplikací, Koš a velké soubory vždy jen se souhlasem uživatele."}
         </p>
       </div>
-      {waiting ? (
+      {outdated ? null : waiting ? (
         <span className="device-running">
           <span className="spinner" aria-hidden="true" />
           {commandStatus(offer).text}
