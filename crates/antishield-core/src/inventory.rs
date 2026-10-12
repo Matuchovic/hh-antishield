@@ -201,7 +201,7 @@ fn sysctl(name: &str) -> Option<String> {
 fn ioreg(args: &[&str]) -> Option<plist::Value> {
     let out = posture::run_limited("/usr/sbin/ioreg", args, IOREG_MAX_OUTPUT)?;
     let end = out.rfind("</plist>")? + "</plist>".len();
-    plist::Value::from_reader_xml(out[..end].as_bytes()).ok()
+    plist::Value::from_reader_xml(&out.as_bytes()[..end]).ok()
 }
 
 /// Hardware Macu: čip, jádra, paměť, sériové číslo, baterie.
