@@ -25,7 +25,12 @@ $InstDir   = Join-Path $env:LOCALAPPDATA $Product
 $AppExe    = Join-Path $InstDir 'antishield-app.exe'
 $Uninst    = Join-Path $InstDir 'uninstall.exe'
 $UninstKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$Product"
-$RunKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# Spuštění po přihlášení: plugin autostart zkusí nejdřív celý počítač (HKLM,
+# jen když aplikace běží jako správce), jinak aktuálního uživatele (HKCU).
+$RunKeys   = [ordered]@{
+  'HKCU' = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+  'HKLM' = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+}
 $StartLnk  = Join-Path ([Environment]::GetFolderPath('Programs')) "$Product.lnk"
 $DeskLnk   = Join-Path ([Environment]::GetFolderPath('Desktop')) "$Product.lnk"
 $DataDir   = Join-Path $env:APPDATA 'cz.hh.antishield'
@@ -74,9 +79,27 @@ function Wait-Until([scriptblock] $Condition, [int] $TimeoutSec, [int] $StepMs =
   return [bool](& $Condition)
 }
 
+# Záznamy „spuštění po přihlášení“ aplikace: @{ Hive; Value }.
+function Get-Autostart {
+  foreach ($hive in $RunKeys.Keys) {
+    $v = Get-RegValue $RunKeys[$hive] $Product
+    if ($null -ne $v) { [pscustomobject]@{ Hive = $hive; Value = [string] $v } }
+  }
+}
+
+# Hlavní okno aplikace (podle titulku) přes UI Automation, nebo $null.
+# Process.MainWindowHandle nestačí: proces má i neviditelné pomocné okno
+# pluginu single-instance („cz.hh.antishield-siw“).
+function Find-AppWindow([int] $ProcessId) {
+  $A = [System.Windows.Automation.AutomationElement]
+  $cond = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]] @(
+    [System.Windows.Automation.PropertyCondition]::new($A::ProcessIdProperty, $ProcessId),
+    [System.Windows.Automation.PropertyCondition]::new($A::NameProperty, $Product)))
+  return $A::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+}
+
 # Texty z okna aplikace přes UI Automation (WebView2 zpřístupňuje obsah stránky).
-function Get-WindowTexts([IntPtr] $Handle) {
-  $win = [System.Windows.Automation.AutomationElement]::FromHandle($Handle)
+function Get-WindowTexts($win) {
   $all = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
   $names = foreach ($e in $all) {
     $n = $null
@@ -125,29 +148,42 @@ try {
   else { Add-Result 'Zástupci' 'ok' 'Nabídka Start i plocha' }
 
   # ── 3. Spuštění ──────────────────────────────────────────────────
+  $uia = $true
+  try { Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes } catch {
+    $uia = $false
+    Add-Result 'UI Automation' 'warn' "Není k dispozici, okno se ověří jen podle procesu: $($_.Exception.Message)"
+  }
   $sw.Restart()
   $psi = [Diagnostics.ProcessStartInfo]::new($AppExe)
   $psi.UseShellExecute = $false
   $psi.WorkingDirectory = $InstDir
   $app = [Diagnostics.Process]::Start($psi)
-  $shown = Wait-Until { $app.Refresh(); $app.HasExited -or $app.MainWindowHandle -ne [IntPtr]::Zero } 90
+  $win = $null
+  $shown = Wait-Until {
+    $app.Refresh()
+    if ($app.HasExited) { return $true }
+    if (-not $uia) { return $app.MainWindowHandle -ne [IntPtr]::Zero }
+    $script:win = Find-AppWindow $app.Id
+    $null -ne $script:win
+  } 90
   if ($app.HasExited) { Stop-Test 'Spuštění' "Aplikace hned skončila (kód $($app.ExitCode))" }
-  if (-not $shown) { Stop-Test 'Spuštění' 'Okno se do 90 s neukázalo' }
-  Add-Result 'Spuštění' 'ok' ('Okno „{0}“ za {1:N1} s' -f $app.MainWindowTitle, $sw.Elapsed.TotalSeconds)
+  if (-not $shown) { Stop-Test 'Spuštění' "Okno „$Product“ se do 90 s neukázalo" }
+  if ($uia) {
+    $r = $win.Current.BoundingRectangle
+    $vidi = -not $win.Current.IsOffscreen
+    Add-Result 'Spuštění' $(if ($vidi) { 'ok' } else { 'warn' }) ('Okno „{0}“ {1:N0}×{2:N0} px{3} za {4:N1} s' -f $win.Current.Name, $r.Width, $r.Height, $(if ($vidi) { '' } else { ' (mimo obrazovku)' }), $sw.Elapsed.TotalSeconds)
+  } else {
+    Add-Result 'Spuštění' 'ok' ('Proces běží a má okno, za {0:N1} s' -f $sw.Elapsed.TotalSeconds)
+  }
 
   # Obsah: rozhraní je vykreslené, když je v postranním panelu vidět
   # „Verze <verze>“ (úvodní animace ho první ~3 s skrývá). Engine je
   # načtený, když stav dole v panelu přestane hlásit „Načítám stav…“.
-  $uia = $true
-  try { Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes } catch {
-    $uia = $false
-    Add-Result 'Obsah okna' 'warn' "UI Automation není k dispozici: $($_.Exception.Message)"
-  }
   if ($uia) {
     $rendered = Wait-Until {
       $app.Refresh()
       if ($app.HasExited) { return $true }
-      $script:texts = @(Get-WindowTexts $app.MainWindowHandle)
+      $script:texts = @(Get-WindowTexts $win)
       $joined = $script:texts -join ' '
       $joined.Contains('Verze') -and $joined.Contains($Version)
     } 90 2000
@@ -159,7 +195,7 @@ try {
     $engine = Wait-Until {
       $app.Refresh()
       if ($app.HasExited) { return $true }
-      $script:texts = @(Get-WindowTexts $app.MainWindowHandle)
+      $script:texts = @(Get-WindowTexts $win)
       -not (($script:texts -join ' ').Contains('Načítám stav'))
     } 120 2000
     if ($app.HasExited) { Stop-Test 'Engine' "Aplikace při načítání enginu skončila (kód $($app.ExitCode))" }
@@ -167,9 +203,21 @@ try {
     else { Add-Result 'Engine' 'warn' 'Stav ochrany se do 120 s nenačetl („Načítám stav…“)' }
   }
 
-  $run = Get-RegValue $RunKey $Product
-  if ($run) { Add-Result 'Spuštění po přihlášení' 'ok' $run }
-  else { Add-Result 'Spuštění po přihlášení' 'warn' 'Aplikace se nezapsala do spouštění po přihlášení' }
+  # Spuštění po přihlášení (výchozí nastavení: zapnuto).
+  $auto = @(Get-Autostart)
+  if (-not $auto.Count) {
+    Add-Result 'Spuštění po přihlášení' 'warn' 'Aplikace se nezapsala do spouštění po přihlášení (HKCU ani HKLM)'
+  } else {
+    foreach ($a in $auto) {
+      $kde = @{ HKCU = 'pro uživatele (HKCU)'; HKLM = 'pro všechny uživatele (HKLM, aplikace běží jako správce)' }[$a.Hive]
+      Add-Result 'Spuštění po přihlášení' 'ok' "$kde`: $($a.Value)"
+      # Cesta s mezerou bez uvozovek: Windows ji dohledá, ale je to vzor,
+      # který bezpečnostní kontroly hlásí (unquoted path).
+      if ($a.Value -notmatch '^"' -and $a.Value -match '^[^"]* [^"]*\.exe') {
+        Add-Result 'Cesta ve spouštění' 'warn' "Cesta s mezerou není v uvozovkách: $($a.Value)"
+      }
+    }
+  }
 
   if (Test-Path -LiteralPath $DataDir) {
     $files = @(Get-ChildItem -LiteralPath $DataDir -Force | ForEach-Object Name)
@@ -212,10 +260,17 @@ try {
       $code = Invoke-Exe $Uninst "/S _?=$InstDir" 180
       $left = @(@($AppExe, $StartLnk, $DeskLnk) | Where-Object { Test-Path -LiteralPath $_ })
       if ($null -ne (Get-RegValue $UninstKey 'DisplayName')) { $left += 'záznam v Aplikacích' }
-      if ($null -ne (Get-RegValue $RunKey $Product)) { $left += 'spouštění po přihlášení' }
+      $autoLeft = @(Get-Autostart)
+      if (@($autoLeft | Where-Object Hive -eq 'HKCU').Count) { $left += 'spouštění po přihlášení (HKCU)' }
       if ($code -ne 0) { Add-Result 'Odinstalace' 'fail' "Odinstalátor skončil s kódem $code" }
       elseif ($left.Count) { Add-Result 'Odinstalace' 'fail' ('Zůstalo: ' + ($left -join ', ')) }
-      else { Add-Result 'Odinstalace' 'ok' 'Aplikace, zástupci, záznam v Aplikacích i spouštění po přihlášení odstraněny' }
+      else { Add-Result 'Odinstalace' 'ok' 'Aplikace, zástupci, záznam v Aplikacích i spouštění po přihlášení (HKCU) odstraněny' }
+      # Odinstalátor maže jen HKCU; záznam v HKLM (aplikace běžela jako
+      # správce) by po odinstalaci zůstal – nahlásit a uklidit.
+      if (@($autoLeft | Where-Object Hive -eq 'HKLM').Count) {
+        Add-Result 'Odinstalace' 'warn' 'Zůstalo spouštění po přihlášení pro všechny uživatele (HKLM) – odinstalátor maže jen HKCU; uklizeno skriptem'
+        Remove-ItemProperty -LiteralPath $RunKeys['HKLM'] -Name $Product -ErrorAction SilentlyContinue
+      }
     } catch {
       Add-Result 'Odinstalace' 'fail' $_.Exception.Message
     }

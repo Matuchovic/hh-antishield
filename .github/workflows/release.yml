@@ -126,6 +126,15 @@ jobs:
         run: |
           $p = Start-Process -FilePath "target/release/antishield-app.exe" -ArgumentList "--self-test" -Wait -PassThru
           if ($p.ExitCode -ne 0) { throw "self-test selhal: $($p.ExitCode)" }
+      # Hotový instalátor se nainstaluje, aplikace spustí (okno, obsah,
+      # engine) a zase odinstaluje – nefunkční instalátor se nevydá.
+      - name: Instalace a spuštění z instalátoru
+        shell: pwsh
+        run: |
+          $ver = node -p "require('./app/package.json').version"
+          $exe = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $exe) { throw "Instalátor nenalezen" }
+          ./.github/scripts/windows-install-test.ps1 -Installer $exe.FullName -Version $ver
       - name: Soubory k vydání
         shell: bash
         run: |
