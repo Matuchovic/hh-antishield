@@ -92,10 +92,13 @@ function Get-Autostart {
 # pluginu single-instance („cz.hh.antishield-siw“).
 function Find-AppWindow([int] $ProcessId) {
   $A = [System.Windows.Automation.AutomationElement]
-  $cond = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]] @(
-    [System.Windows.Automation.PropertyCondition]::new($A::ProcessIdProperty, $ProcessId),
-    [System.Windows.Automation.PropertyCondition]::new($A::NameProperty, $Product)))
-  return $A::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $cond)
+  $cond = [System.Windows.Automation.PropertyCondition]::new($A::ProcessIdProperty, $ProcessId)
+  $want = $Product.Replace('&', '')
+  foreach ($w in $A::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $cond)) {
+    # Win32 okno má v UI Automation „&“ vypuštěné (značka klávesové zkratky).
+    if ("$($w.Current.Name)".Replace('&', '') -eq $want) { return $w }
+  }
+  return $null
 }
 
 # Texty z okna aplikace přes UI Automation (WebView2 zpřístupňuje obsah stránky).
@@ -167,11 +170,12 @@ try {
     $null -ne $script:win
   } 90
   if ($app.HasExited) { Stop-Test 'Spuštění' "Aplikace hned skončila (kód $($app.ExitCode))" }
-  if (-not $shown) { Stop-Test 'Spuštění' "Okno „$Product“ se do 90 s neukázalo" }
+  # Pozor: PowerShell bere „ a “ jako uvozovky – české uvozovky jen v '…' řetězcích.
+  if (-not $shown) { Stop-Test 'Spuštění' ('Okno „{0}“ se do 90 s neukázalo' -f $Product) }
   if ($uia) {
     $r = $win.Current.BoundingRectangle
     $vidi = -not $win.Current.IsOffscreen
-    Add-Result 'Spuštění' $(if ($vidi) { 'ok' } else { 'warn' }) ('Okno „{0}“ {1:N0}×{2:N0} px{3} za {4:N1} s' -f $win.Current.Name, $r.Width, $r.Height, $(if ($vidi) { '' } else { ' (mimo obrazovku)' }), $sw.Elapsed.TotalSeconds)
+    Add-Result 'Spuštění' $(if ($vidi) { 'ok' } else { 'warn' }) ('Okno „{0}“ {1:N0}×{2:N0} px{3} za {4:N1} s' -f $Product, $r.Width, $r.Height, $(if ($vidi) { '' } else { ' (mimo obrazovku)' }), $sw.Elapsed.TotalSeconds)
   } else {
     Add-Result 'Spuštění' 'ok' ('Proces běží a má okno, za {0:N1} s' -f $sw.Elapsed.TotalSeconds)
   }
