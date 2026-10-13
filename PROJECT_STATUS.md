@@ -1,8 +1,18 @@
 # PROJECT_STATUS – H&H AntiShield
 
-Aktualizováno: 2026-10-12 (v0.8.1 vydána)
+Aktualizováno: 2026-10-13 (instalátor pro Windows ověřený na Windows)
 
 ## Stav
+- Instalátor pro Windows ověřený na skutečném Windows (13. 10. 2026, GitHub
+  `windows-latest`, workflow „Instalace na Windows“, PR #16): instalátor
+  0.8.1 z vydání (otisk sedí) se potichu nainstaluje pro uživatele bez práv
+  správce (~3 s), vytvoří zástupce ve Startu a na ploše a záznam
+  v Aplikacích; aplikace otevře okno, rozhraní se vykreslí (~7 s, UI
+  Automation čte text z WebView2), engine se načte, 23 s běží bez pádu;
+  odinstalace je čistá. Release nově před vydáním hotový instalátor stejně
+  nainstaluje, spustí a odinstaluje. Uživatel hlásil „nejde nainstalovat“:
+  příčina je chybějící podpis (Chrome soubor podržel jako
+  „Unconfirmed….crdownload“), ne vadný instalátor.
 - v0.8.1 vydána 12. 10. 2026 (PR #14, Release se všemi balíčky
   a `latest.json`): smíšené verze.
   Mac s 0.8 a základními zásadami posílá zprávu ve tvaru z 0.7 (správce
@@ -210,6 +220,12 @@ Aktualizováno: 2026-10-12 (v0.8.1 vydána)
   (i s vypnutými oznámeními) a zásah jde do auditu.
 
 ## Testy (2026-10-12, lokálně)
+- 2026-10-13, Windows (GitHub `windows-latest`, PR #16): zkouška
+  `.github/scripts/windows-install-test.ps1` nad instalátorem 0.8.1
+  zelená (instalace, soubory, záznam v Aplikacích, zástupci, okno 1044×788,
+  obsah okna, engine, spuštění po přihlášení, běh bez pádu, odinstalace).
+  Syntaxe skriptu ověřená parserem PowerShellu, tok chyb a souhrnu
+  na Linuxu s náhradním instalátorem. Release se zkouškou zatím neběžel.
 - 0.8.1: CI v PR #14 zelené (Linux, macOS, Windows), Release zelený.
   Aplikace 35 testů (nový: zpráva Macu se základními zásadami má
   jen pole z 0.7, s rozšířenou správou nese zásady a hloubkový odhad,
@@ -299,7 +315,26 @@ Aktualizováno: 2026-10-12 (v0.8.1 vydána)
   (spuštěná z DMG nebo ze Stažených – macOS ji přesune do dočasného umístění
   jen pro čtení). Od 0.3.1 to banner řekne i s postupem; 0.3.0 je potřeba
   jednou nainstalovat ručně do Aplikací.
-- Aplikace zatím nespuštěna na skutečném Windows.
+- Windows ověřené jen na Windows Serveru (GitHub runner, běží jako
+  správce bez UAC), na Windows 11 u uživatele zatím ne.
+- Instalátor pro Windows není podepsaný. Chrome/Edge ho při stažení podrží
+  jako podezřelý (ve Stažených „Unconfirmed….crdownload“; Chrome: ikona
+  stahování → › → „Stáhnout podezřelý soubor“, Edge: … → „Ponechat“ →
+  „Zobrazit více“ → „Přesto zachovat“), SmartScreen chce „Další
+  informace“ → „Přesto spustit“, Inteligentní řízení aplikací (Smart App
+  Control) ho zablokuje bez možnosti obejít. Trvalé řešení je podpis
+  (Azure Artifact Signing: firmy z EU, 9,99 $/měsíc; Tauri `signCommand`
+  podepíše aplikaci, instalátor, odinstalátor i pluginy NSIS); čeká na
+  rozhodnutí uživatele. Uživatel AntiShield lidem instaluje sám, návod
+  v HH Platform nechce.
+- Spuštění po přihlášení na Windows (tauri-plugin-autostart 2.7 →
+  auto-launch 0.6, režim Dynamic): cesta v hodnotě Run je bez uvozovek
+  (`…\H&H AntiShield\antishield-app.exe --background`, Windows ji dohledá,
+  ale je to vzor „unquoted path“) a při běhu jako správce se zapíše do
+  HKLM pro všechny uživatele, kde ji odinstalátor (maže jen HKCU) nechá.
+  Oprava: na Windows vlastní zápis jen do HKCU s cestou v uvozovkách.
+- Test `speed::tests::a_program_is_asked_to_quit_and_its_exit_is_confirmed`
+  občas selže na Linuxu (CI na `main` po #15; v PR #16 prošel).
 - Self-test v Release dřív běžel na binárce mimo podepsaný balíček, takže
   pád v tvrzeném prostředí neodhalil (opraveno).
 - Repozitář je veřejný – zvážit přepnutí na soukromý.
@@ -335,6 +370,10 @@ do `main`, pak Actions → Release → Run workflow se zaškrtnutým „publish�
 Pravidla: Actions → Rules → Run workflow s „publish“ (jinak každé pondělí).
 
 ## Další krok
+Windows: rozhodnout o podpisu instalátoru (Azure Artifact Signing) a opravit
+spuštění po přihlášení (HKCU, cesta v uvozovkách) v 0.8.2; po sloučení PR #16
+poběží zkouška instalace v každém vydání.
+
 Správce i Mac Viktórie aktualizovat na 0.8.1 (banner), správce požádá
 o rozšířenou správu, uživatelka potvrdí. Pak ověřit detail (hardware,
 zabezpečení, výkon), hloubkovou údržbu, žádost o restart (povolit ovládání
