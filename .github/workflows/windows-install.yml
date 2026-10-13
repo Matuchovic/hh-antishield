@@ -1,0 +1,58 @@
+name: Instalace na Windows
+
+# Ověří instalátor pro Windows přesně ten, který si lidé stahují: vezme ho
+# z vydání, zkontroluje otisk, potichu nainstaluje, spustí aplikaci (okno,
+# obsah, engine), udělá snímek obrazovky a zase odinstaluje. Postup je
+# v .github/scripts/windows-install-test.ps1 (stejný běží i ve vydání).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Vydání k ověření, např. v0.8.1 (prázdné = poslední)"
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/windows-install.yml
+      - .github/scripts/windows-install-test.ps1
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Instalace a spuštění (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Instalátor z vydání
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $tag = $env:TAG
+          if (-not $tag) { $tag = gh release view --repo $env:GITHUB_REPOSITORY --json tagName --jq .tagName }
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Neplatné vydání: $tag" }
+          $ver = $tag.Substring(1)
+          $name = "hh-antishield_${ver}_x64-setup.exe"
+          $dir = Join-Path $env:RUNNER_TEMP 'vydani'
+          gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $dir --pattern $name --pattern 'SHA256SUMS-windows.txt'
+          if ($LASTEXITCODE) { throw "Stažení z vydání $tag selhalo" }
+          # Otisk musí sedět se SHA256SUMS z vydání (stejný soubor jako u uživatele).
+          $line = Get-Content (Join-Path $dir 'SHA256SUMS-windows.txt') | Where-Object { $_ -match [regex]::Escape($name) } | Select-Object -First 1
+          $expected = ($line -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash (Join-Path $dir $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (-not $expected -or $expected -ne $actual) { throw "Otisk nesedí: $actual (čekal se $expected)" }
+          "VERZE=$ver" >> $env:GITHUB_ENV
+          "INSTALATOR=$(Join-Path $dir $name)" >> $env:GITHUB_ENV
+      - name: Instalace, spuštění, odinstalace
+        shell: pwsh
+        run: ./.github/scripts/windows-install-test.ps1 -Installer $env:INSTALATOR -Version $env:VERZE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-instalace-snimek
+          path: ${{ runner.temp }}/antishield-okno.png
+          if-no-files-found: ignore
